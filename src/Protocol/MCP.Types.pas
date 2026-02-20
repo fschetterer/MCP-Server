@@ -112,6 +112,10 @@ type
     SSLCertFile: RawUtf8;
     /// Path to SSL private key file
     SSLKeyFile: RawUtf8;
+    /// Password for SSL private key (if encrypted)
+    SSLKeyPassword: RawUtf8;
+    /// Use self-signed certificate (auto-generate if no cert files provided)
+    SSLSelfSigned: Boolean;
     /// Enable CORS
     CorsEnabled: Boolean;
     /// Allowed CORS origins ('*' for all)
@@ -292,6 +296,8 @@ begin
   Settings.SSLEnabled := False;
   Settings.SSLCertFile := '';
   Settings.SSLKeyFile := '';
+  Settings.SSLKeyPassword := '';
+  Settings.SSLSelfSigned := False;
   Settings.CorsEnabled := True;
   Settings.CorsAllowedOrigins := '*';
   Settings.SSEKeepaliveIntervalMs := 30000; // 30 seconds default

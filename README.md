@@ -24,7 +24,7 @@ High-performance [Model Context Protocol (MCP)](https://modelcontextprotocol.io/
 
 ### Transport Layer
 - **stdio transport** - JSON-RPC newline-delimited, logs to stderr
-- **HTTP transport** - REST API with Server-Sent Events (SSE) and CORS support
+- **HTTP transport** - REST API with Server-Sent Events (SSE), CORS, and TLS support
 - **Session management** - Cryptographic session IDs (128-bit)
 - **SSE notifications** - Real-time bidirectional communication
 - **Keepalive** - Configurable SSE keepalive (default 30s)
@@ -127,6 +127,21 @@ MCPServer.exe --transport=http
 # Custom port
 MCPServer.exe --transport=http --port=8080
 ```
+
+### HTTPS / TLS
+
+```bash
+# Self-signed certificate (development/testing)
+MCPServer.exe --transport=http --tls-self-signed
+
+# With certificate files
+MCPServer.exe --transport=http --tls --cert=server.crt --key=server.key
+
+# With encrypted private key
+MCPServer.exe --transport=http --tls --cert=server.crt --key=server.key --key-password=secret
+```
+
+TLS uses mORMot2's native support: SChannel on Windows (no extra DLLs), OpenSSL on Linux.
 
 ### SSE Connection
 

@@ -217,6 +217,24 @@ begin
   if TransportTypeStr = '' then
     TransportTypeStr := 'http';
   TransportType := TMCPTransportFactory.ParseTransportType(TransportTypeStr);
+
+  // Parse TLS settings
+  if HasSwitch('tls') then
+    Settings.SSLEnabled := True;
+  S := GetSwitchValue('cert');
+  if S <> '' then
+    Settings.SSLCertFile := StringToUtf8(S);
+  S := GetSwitchValue('key');
+  if S <> '' then
+    Settings.SSLKeyFile := StringToUtf8(S);
+  S := GetSwitchValue('key-password');
+  if S <> '' then
+    Settings.SSLKeyPassword := StringToUtf8(S);
+  if HasSwitch('tls-self-signed') then
+  begin
+    Settings.SSLSelfSigned := True;
+    Settings.SSLEnabled := True;
+  end;
 end;
 
 procedure RunWithTransport;
@@ -225,6 +243,7 @@ var
   HttpTransport: TMCPHttpTransport;
   StdioTransport: TMCPStdioTransport;
   ShutdownSuccess: Boolean;
+  Protocol: string;
 begin
   IsDaemon := HasSwitch('daemon') or HasSwitch('d');
 
@@ -258,6 +277,11 @@ begin
         if Settings.Port <> 3000 then
           WriteLn('Port: ', Settings.Port);
 
+        if Settings.SSLEnabled then
+          Protocol := 'https'
+        else
+          Protocol := 'http';
+
         HttpTransport := TMCPHttpTransport.Create(TransportConfig);
         try
           HttpTransport.ManagerRegistry := Registry;
@@ -265,7 +289,7 @@ begin
           HttpTransport.Start;
 
           WriteLn;
-          WriteLn('Server listening on http://', Settings.Host, ':',
+          WriteLn('Server listening on ', Protocol, '://', Settings.Host, ':',
             Settings.Port, Settings.Endpoint);
 
           if IsDaemon then

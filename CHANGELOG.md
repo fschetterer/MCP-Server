@@ -1,0 +1,12 @@
+# Changelog
+
+## Unreleased
+
+### Added
+- **TLS/HTTPS support** for HTTP transport
+  - `--tls` flag to enable TLS with certificate files
+  - `--cert=path` and `--key=path` to specify certificate and private key
+  - `--key-password=pass` for encrypted private keys
+  - `--tls-self-signed` for zero-config development HTTPS (auto-generated certificate)
+  - Console and log output reflect `https://` when TLS is active
+  - Uses mORMot2's native TLS support (SChannel on Windows, OpenSSL on Linux)

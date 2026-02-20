@@ -310,6 +310,8 @@ end;
 procedure TMCPHttpTransport.Start;
 var
   Port: RawUtf8;
+  Options: THttpServerOptions;
+  Scheme: RawUtf8;
 begin
   if fActive then
     Exit;
@@ -321,6 +323,11 @@ begin
 
   Port := UInt32ToUtf8(fConfig.HttpPort);
 
+  // Build server options
+  Options := [hsoNoXPoweredHeader];
+  if fConfig.SSLEnabled then
+    Include(Options, hsoEnableTls);
+
   fHttpServer := THttpAsyncServer.Create(
     Port,
     nil,
@@ -328,11 +335,32 @@ begin
     'MCP Server',
     SystemInfo.dwNumberOfProcessors + 1,
     30000,  // 30 second keep-alive for SSE connections
-    [hsoNoXPoweredHeader]
+    Options
   );
 
   fHttpServer.OnRequest := OnRequest;
-  fHttpServer.WaitStarted;
+
+  // Wait for server to start, with TLS configuration if enabled
+  // WaitStarted/WaitStartedHttps are procedures that raise exceptions on failure
+  if fConfig.SSLSelfSigned then
+  begin
+    fHttpServer.WaitStartedHttps;
+    Scheme := 'https';
+  end
+  else if fConfig.SSLEnabled then
+  begin
+    fHttpServer.WaitStarted(30,
+      Utf8ToString(fConfig.SSLCertFile),
+      Utf8ToString(fConfig.SSLKeyFile),
+      fConfig.SSLKeyPassword);
+    Scheme := 'https';
+  end
+  else
+  begin
+    fHttpServer.WaitStarted;
+    Scheme := 'http';
+  end;
+
   fActive := True;
 
   // Start SSE keepalive thread if interval > 0
@@ -348,8 +376,8 @@ begin
   SubscribeToEventBus;
 
   TSynLog.Add.Log(sllInfo,
-    'MCP HTTP Transport started on http://%:% (SSE enabled, graceful shutdown enabled)',
-    [fConfig.HttpHost, fConfig.HttpPort]);
+    'MCP HTTP Transport started on %://%:% (SSE enabled, graceful shutdown enabled)',
+    [Scheme, fConfig.HttpHost, fConfig.HttpPort]);
 end;
 
 function TMCPHttpTransport.GracefulShutdown(TimeoutMs: Cardinal): Boolean;

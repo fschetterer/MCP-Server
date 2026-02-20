@@ -41,6 +41,10 @@ type
     SSLEnabled: Boolean;
     SSLCertFile: RawUtf8;
     SSLKeyFile: RawUtf8;
+    /// Password for SSL private key (if encrypted)
+    SSLKeyPassword: RawUtf8;
+    /// Use self-signed certificate (auto-generate if no cert files provided)
+    SSLSelfSigned: Boolean;
     /// CORS settings (used when TransportType = mttHttp)
     CorsEnabled: Boolean;
     CorsAllowedOrigins: RawUtf8;
@@ -177,6 +181,8 @@ begin
   Config.SSLEnabled := False;
   Config.SSLCertFile := '';
   Config.SSLKeyFile := '';
+  Config.SSLKeyPassword := '';
+  Config.SSLSelfSigned := False;
   Config.CorsEnabled := True;
   Config.CorsAllowedOrigins := '*';
   Config.SSEKeepaliveIntervalMs := 30000; // 30 seconds default
@@ -427,6 +433,8 @@ begin
   Result.SSLEnabled := Settings.SSLEnabled;
   Result.SSLCertFile := Settings.SSLCertFile;
   Result.SSLKeyFile := Settings.SSLKeyFile;
+  Result.SSLKeyPassword := Settings.SSLKeyPassword;
+  Result.SSLSelfSigned := Settings.SSLSelfSigned;
   Result.CorsEnabled := Settings.CorsEnabled;
   Result.CorsAllowedOrigins := Settings.CorsAllowedOrigins;
   Result.SSEKeepaliveIntervalMs := Settings.SSEKeepaliveIntervalMs;
