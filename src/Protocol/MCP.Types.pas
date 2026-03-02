@@ -25,7 +25,7 @@ const
   MCP_PROTOCOL_VERSION_DEFAULT = '2025-03-26';
 
   /// Supported MCP Protocol versions (comma-separated for validation)
-  MCP_SUPPORTED_VERSIONS = '2025-06-18,2025-03-26';
+  MCP_SUPPORTED_VERSIONS = '2025-06-18,2025-03-26,2024-11-05';
 
   /// JSON-RPC 2.0 Error Codes
   JSONRPC_PARSE_ERROR      = -32700;
@@ -332,9 +332,11 @@ end;
 function IsSupportedProtocolVersion(const Version: RawUtf8): Boolean;
 begin
   // Check if version matches one of the supported versions
+  // Must include 2024-11-05 for backward compatibility with older clients
   Result := (Version <> '') and
     (IdemPropNameU(Version, MCP_PROTOCOL_VERSION) or
-     IdemPropNameU(Version, MCP_PROTOCOL_VERSION_DEFAULT));
+     IdemPropNameU(Version, MCP_PROTOCOL_VERSION_DEFAULT) or
+     IdemPropNameU(Version, '2024-11-05'));
 end;
 
 end.

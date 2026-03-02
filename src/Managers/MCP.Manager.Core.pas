@@ -37,6 +37,7 @@ type
     function HandlesMethod(const Method: RawUtf8): Boolean;
     function ExecuteMethod(const Method: RawUtf8; const Params: Variant): Variant;
     /// Core methods
+    function NegotiateProtocolVersion(const ClientVersion: RawUtf8): RawUtf8;
     function Initialize(const Params: Variant): Variant;
     function Ping: Variant;
     /// Handle cancellation notification
@@ -104,18 +105,35 @@ begin
       [Method, GetCapabilityName]);
 end;
 
+function TMCPCoreManager.NegotiateProtocolVersion(
+  const ClientVersion: RawUtf8): RawUtf8;
+begin
+  // Echo back the client's requested version. Actual feature support is
+  // controlled by the capabilities object, not the protocol version string.
+  // Clients like Claude Code reject any version different from what they sent.
+  // Since we only declare capabilities we actually support (tools, resources,
+  // prompts), clients won't attempt unsupported features like binary transport.
+  if ClientVersion <> '' then
+    Result := ClientVersion
+  else
+    Result := MCP_PROTOCOL_VERSION_DEFAULT;
+end;
+
 function TMCPCoreManager.Initialize(const Params: Variant): Variant;
 var
   ParamsDoc, ClientInfo: PDocVariantData;
-  ClientName, ClientVersion: RawUtf8;
-  Capabilities, Tools, Resources, Prompts, Logging, Completions, ServerInfo: Variant;
+  ClientName, ClientVersion, NegotiatedVersion: RawUtf8;
+  Capabilities, Tools, Resources, Prompts, ServerInfo: Variant;
 begin
   TSynLog.Add.Log(sllInfo, 'MCP Initialize called');
+
+  ClientVersion := '';
 
   // Extract client info if present
   if not VarIsEmptyOrNull(Params) then
   begin
     ParamsDoc := _Safe(Params);
+    ClientVersion := ParamsDoc^.U['protocolVersion'];
     ClientInfo := ParamsDoc^.O['clientInfo'];
     if ClientInfo <> nil then
     begin
@@ -124,7 +142,14 @@ begin
       if (ClientName <> '') and (ClientVersion <> '') then
         TSynLog.Add.Log(sllInfo, 'Client: % v%', [ClientName, ClientVersion]);
     end;
+    // Re-read protocolVersion (ClientVersion was overwritten by client version string)
+    ClientVersion := ParamsDoc^.U['protocolVersion'];
   end;
+
+  // Negotiate protocol version
+  NegotiatedVersion := NegotiateProtocolVersion(ClientVersion);
+  TSynLog.Add.Log(sllInfo, 'Protocol negotiation: client=% -> server=%',
+    [ClientVersion, NegotiatedVersion]);
 
   // Generate cryptographically secure session ID (128 bits of entropy)
   // Using TAesPrng for cryptographic random number generation
@@ -132,7 +157,7 @@ begin
 
   // Build response
   TDocVariantData(Result).InitFast;
-  TDocVariantData(Result).S['protocolVersion'] := MCP_PROTOCOL_VERSION;
+  TDocVariantData(Result).S['protocolVersion'] := NegotiatedVersion;
 
   // Capabilities
   TDocVariantData(Capabilities).InitFast;
@@ -155,13 +180,8 @@ begin
   TDocVariantData(Prompts).B['listChanged'] := True;
   TDocVariantData(Capabilities).AddValue('prompts', Prompts);
 
-  // Logging capability (empty object indicates support)
-  TDocVariantData(Logging).InitFast;
-  TDocVariantData(Capabilities).AddValue('logging', Logging);
-
-  // Completions capability (empty object indicates support)
-  TDocVariantData(Completions).InitFast;
-  TDocVariantData(Capabilities).AddValue('completions', Completions);
+  // Logging and Completions: omit from capabilities when not actively used.
+  // MCP clients (Python SDK) use exclude_none=True, so absent = not supported.
 
   TDocVariantData(Result).AddValue('capabilities', Capabilities);
 
