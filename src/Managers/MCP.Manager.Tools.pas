@@ -9,6 +9,7 @@ interface
 uses
   sysutils,
   mormot.core.base,
+  mormot.core.os,
   mormot.core.unicode,
   mormot.core.text,
   mormot.core.variants,
@@ -23,17 +24,22 @@ type
   /// Tools capability manager for MCP protocol
   TMCPToolsManager = class(TInterfacedObject, IMCPCapabilityManager)
   private
+    fLock: TRTLCriticalSection;
     fTools: array of IMCPTool;
     function FindTool(const Name: RawUtf8): IMCPTool;
   public
     constructor Create;
     destructor Destroy; override;
     /// Register a tool
-    procedure RegisterTool(const Tool: IMCPTool); overload;
+    // - SuppressNotification: skip tools/list_changed event (for batch operations)
+    procedure RegisterTool(const Tool: IMCPTool;
+      SuppressNotification: Boolean = False); overload;
     /// Register a tool by class
     procedure RegisterTool(ToolClass: TMCPToolClass); overload;
     /// Unregister a tool by name
-    function UnregisterTool(const ToolName: RawUtf8): Boolean;
+    // - SuppressNotification: skip tools/list_changed event (for batch operations)
+    function UnregisterTool(const ToolName: RawUtf8;
+      SuppressNotification: Boolean = False): Boolean;
     /// IMCPCapabilityManager implementation
     function GetCapabilityName: RawUtf8;
     function HandlesMethod(const Method: RawUtf8): Boolean;
@@ -51,32 +57,46 @@ implementation
 constructor TMCPToolsManager.Create;
 begin
   inherited Create;
+  InitializeCriticalSection(fLock);
   SetLength(fTools, 0);
 end;
 
 destructor TMCPToolsManager.Destroy;
 begin
-  SetLength(fTools, 0);
+  EnterCriticalSection(fLock);
+  try
+    SetLength(fTools, 0);
+  finally
+    LeaveCriticalSection(fLock);
+  end;
+  DeleteCriticalSection(fLock);
   inherited;
 end;
 
-procedure TMCPToolsManager.RegisterTool(const Tool: IMCPTool);
+procedure TMCPToolsManager.RegisterTool(const Tool: IMCPTool;
+  SuppressNotification: Boolean);
 var
   i: PtrInt;
 begin
-  // Check if already registered
-  for i := 0 to High(fTools) do
-    if IdemPropNameU(fTools[i].GetName, Tool.GetName) then
-      Exit;
+  EnterCriticalSection(fLock);
+  try
+    // Check if already registered
+    for i := 0 to High(fTools) do
+      if IdemPropNameU(fTools[i].GetName, Tool.GetName) then
+        Exit;
 
-  // Add to list
-  SetLength(fTools, Length(fTools) + 1);
-  fTools[High(fTools)] := Tool;
+    // Add to list
+    SetLength(fTools, Length(fTools) + 1);
+    fTools[High(fTools)] := Tool;
+  finally
+    LeaveCriticalSection(fLock);
+  end;
 
   TSynLog.Add.Log(sllInfo, 'Registered tool: %', [Tool.GetName]);
 
-  // Emit tools/list_changed notification
-  MCPEventBus.Publish(MCP_EVENT_TOOLS_LIST_CHANGED, _ObjFast([]));
+  // Emit tools/list_changed notification (unless suppressed for batch operations)
+  if not SuppressNotification then
+    MCPEventBus.Publish(MCP_EVENT_TOOLS_LIST_CHANGED, _ObjFast([]));
 end;
 
 procedure TMCPToolsManager.RegisterTool(ToolClass: TMCPToolClass);
@@ -87,28 +107,38 @@ begin
   RegisterTool(Tool);
 end;
 
-function TMCPToolsManager.UnregisterTool(const ToolName: RawUtf8): Boolean;
+function TMCPToolsManager.UnregisterTool(const ToolName: RawUtf8;
+  SuppressNotification: Boolean): Boolean;
 var
-  i: PtrInt;
+  i, j: PtrInt;
 begin
   Result := False;
-  for i := 0 to High(fTools) do
-    if IdemPropNameU(fTools[i].GetName, ToolName) then
-    begin
-      // Remove by shifting remaining elements
-      if i < High(fTools) then
-        Move(fTools[i + 1], fTools[i],
-          (High(fTools) - i) * SizeOf(IMCPTool));
-      SetLength(fTools, Length(fTools) - 1);
+  EnterCriticalSection(fLock);
+  try
+    for i := 0 to High(fTools) do
+      if IdemPropNameU(fTools[i].GetName, ToolName) then
+      begin
+        // Shift elements using interface assignment (preserves refcounts).
+        // Move() does raw byte copy which corrupts interface refcounts.
+        for j := i to High(fTools) - 1 do
+          fTools[j] := fTools[j + 1];
+        fTools[High(fTools)] := nil;
+        SetLength(fTools, Length(fTools) - 1);
+        Result := True;
+        Break;
+      end;
+  finally
+    LeaveCriticalSection(fLock);
+  end;
 
-      TSynLog.Add.Log(sllInfo, 'Unregistered tool: %', [ToolName]);
+  if Result then
+  begin
+    TSynLog.Add.Log(sllInfo, 'Unregistered tool: %', [ToolName]);
 
-      // Emit tools/list_changed notification
+    // Emit tools/list_changed notification (unless suppressed for batch operations)
+    if not SuppressNotification then
       MCPEventBus.Publish(MCP_EVENT_TOOLS_LIST_CHANGED, _ObjFast([]));
-
-      Result := True;
-      Exit;
-    end;
+  end;
 end;
 
 function TMCPToolsManager.FindTool(const Name: RawUtf8): IMCPTool;
@@ -116,12 +146,17 @@ var
   i: PtrInt;
 begin
   Result := nil;
-  for i := 0 to High(fTools) do
-    if IdemPropNameU(fTools[i].GetName, Name) then
-    begin
-      Result := fTools[i];
-      Exit;
-    end;
+  EnterCriticalSection(fLock);
+  try
+    for i := 0 to High(fTools) do
+      if IdemPropNameU(fTools[i].GetName, Name) then
+      begin
+        Result := fTools[i];
+        Exit;
+      end;
+  finally
+    LeaveCriticalSection(fLock);
+  end;
 end;
 
 function TMCPToolsManager.GetCapabilityName: RawUtf8;
@@ -157,13 +192,18 @@ begin
   TDocVariantData(Result).InitFast;
   TDocVariantData(Tools).InitArray([], JSON_FAST);
 
-  for i := 0 to High(fTools) do
-  begin
-    TDocVariantData(ToolInfo).InitFast;
-    TDocVariantData(ToolInfo).U['name'] := fTools[i].GetName;
-    TDocVariantData(ToolInfo).U['description'] := fTools[i].GetDescription;
-    TDocVariantData(ToolInfo).AddValue('inputSchema', fTools[i].GetInputSchema);
-    TDocVariantData(Tools).AddItem(ToolInfo);
+  EnterCriticalSection(fLock);
+  try
+    for i := 0 to High(fTools) do
+    begin
+      TDocVariantData(ToolInfo).InitFast;
+      TDocVariantData(ToolInfo).U['name'] := fTools[i].GetName;
+      TDocVariantData(ToolInfo).U['description'] := fTools[i].GetDescription;
+      TDocVariantData(ToolInfo).AddValue('inputSchema', fTools[i].GetInputSchema);
+      TDocVariantData(Tools).AddItem(ToolInfo);
+    end;
+  finally
+    LeaveCriticalSection(fLock);
   end;
 
   TDocVariantData(Result).AddValue('tools', Tools);

@@ -25,6 +25,7 @@ uses
   mormot.core.log,
   mormot.core.rtti,
   MCP.Types,
+  MCP.Events,
   MCP.Transport.Base;
 
 type
@@ -35,9 +36,10 @@ type
   // - Handles SIGTERM/SIGINT with graceful shutdown (5s timeout for pending requests)
   TMCPStdioTransport = class(TMCPTransportBase)
   private
+    fWriteLock: TRTLCriticalSection;
     /// Read a line from stdin
     function ReadLine: RawUtf8;
-    /// Write a line to stdout (JSON-RPC responses)
+    /// Write a line to stdout (JSON-RPC responses), thread-safe
     procedure WriteLine(const Line: RawUtf8);
     /// Write a log message to stderr (NOT stdout)
     procedure LogToStderr(const Msg: RawUtf8);
@@ -46,6 +48,13 @@ type
     /// Wait for pending requests to complete (for graceful shutdown)
     // - Returns True if all requests completed within timeout
     function WaitForPendingRequests(TimeoutMs: Cardinal): Boolean;
+    /// EventBus callbacks (called from background threads)
+    procedure OnToolsListChanged(const Data: Variant);
+    procedure OnResourcesListChanged(const Data: Variant);
+    procedure OnPromptsListChanged(const Data: Variant);
+    /// Subscribe/unsubscribe to EventBus notifications
+    procedure SubscribeToEventBus;
+    procedure UnsubscribeFromEventBus;
   public
     /// Create stdio transport
     constructor Create(const AConfig: TMCPTransportConfig); override;
@@ -67,12 +76,14 @@ implementation
 constructor TMCPStdioTransport.Create(const AConfig: TMCPTransportConfig);
 begin
   inherited Create(AConfig);
+  InitializeCriticalSection(fWriteLock);
 end;
 
 destructor TMCPStdioTransport.Destroy;
 begin
   if fActive then
     Stop;
+  DeleteCriticalSection(fWriteLock);
   inherited;
 end;
 
@@ -90,15 +101,23 @@ end;
 
 procedure TMCPStdioTransport.WriteLine(const Line: RawUtf8);
 begin
-  WriteLn(Utf8ToString(Line));
-  Flush(Output);
+  // Thread-safe: EventBus callbacks come from background threads (pipe monitor).
+  // Use Write + explicit LF instead of WriteLn. On Windows, WriteLn outputs
+  // CRLF (\r\n) but MCP clients expect LF-only (\n) line endings.
+  EnterCriticalSection(fWriteLock);
+  try
+    Write(Utf8ToString(Line));
+    Write(#10);
+    Flush(Output);
+  finally
+    LeaveCriticalSection(fWriteLock);
+  end;
 end;
 
 procedure TMCPStdioTransport.LogToStderr(const Msg: RawUtf8);
 begin
-  // Write log to stderr to avoid interfering with JSON-RPC protocol on stdout
-  // MCP clients expect only JSON-RPC messages on stdout; logs go to stderr
-  WriteLn(ErrOutput, '[MCP] ', Utf8ToString(Msg));
+  // Write diagnostic log to stderr (MCP clients ignore stderr per spec)
+  Write(ErrOutput, '[MCP] ', Utf8ToString(Msg), #10);
   Flush(ErrOutput);
   // Also send to TSynLog for file logging
   TSynLog.Add.Log(sllInfo, '%', [Msg]);
@@ -216,6 +235,9 @@ begin
   // Register signal handlers for graceful shutdown (SIGTERM/SIGINT)
   RegisterSignalHandlers;
 
+  // Subscribe to EventBus for dynamic tool/resource/prompt changes
+  SubscribeToEventBus;
+
   // For stdio, we run the processing in the main thread
   // This blocks until EOF is received on stdin or shutdown signal
   LogToStderr('Starting stdio transport (graceful shutdown enabled)');
@@ -226,6 +248,7 @@ procedure TMCPStdioTransport.Stop;
 begin
   if fActive then
   begin
+    UnsubscribeFromEventBus;
     fActive := False;
     LogToStderr('Stopping stdio transport');
   end;
@@ -242,6 +265,52 @@ begin
   NotificationJson := BuildNotification(Method, Params);
   WriteLine(NotificationJson);
   LogToStderr(FormatUtf8('Notification sent: %', [Method]));
+end;
+
+{ EventBus Integration }
+
+procedure TMCPStdioTransport.OnToolsListChanged(const Data: Variant);
+begin
+  SendNotification(MCP_EVENT_TOOLS_LIST_CHANGED, Data);
+end;
+
+procedure TMCPStdioTransport.OnResourcesListChanged(const Data: Variant);
+begin
+  SendNotification(MCP_EVENT_RESOURCES_LIST_CHANGED, Data);
+end;
+
+procedure TMCPStdioTransport.OnPromptsListChanged(const Data: Variant);
+begin
+  SendNotification(MCP_EVENT_PROMPTS_LIST_CHANGED, Data);
+end;
+
+procedure TMCPStdioTransport.SubscribeToEventBus;
+var
+  EventBus: TMCPEventBus;
+begin
+  EventBus := MCPEventBus;
+  // Clear stale pending events from pre-initialization tool registrations.
+  // The client calls tools/list after init to get the full current list,
+  // so these queued notifications would be redundant and premature.
+  EventBus.ClearPending(MCP_EVENT_TOOLS_LIST_CHANGED);
+  EventBus.ClearPending(MCP_EVENT_RESOURCES_LIST_CHANGED);
+  EventBus.ClearPending(MCP_EVENT_PROMPTS_LIST_CHANGED);
+  // Subscribe for future changes (app connect/disconnect)
+  EventBus.Subscribe(MCP_EVENT_TOOLS_LIST_CHANGED, OnToolsListChanged);
+  EventBus.Subscribe(MCP_EVENT_RESOURCES_LIST_CHANGED, OnResourcesListChanged);
+  EventBus.Subscribe(MCP_EVENT_PROMPTS_LIST_CHANGED, OnPromptsListChanged);
+  TSynLog.Add.Log(sllInfo, 'Stdio transport subscribed to EventBus notifications');
+end;
+
+procedure TMCPStdioTransport.UnsubscribeFromEventBus;
+var
+  EventBus: TMCPEventBus;
+begin
+  EventBus := MCPEventBus;
+  EventBus.Unsubscribe(MCP_EVENT_TOOLS_LIST_CHANGED, OnToolsListChanged);
+  EventBus.Unsubscribe(MCP_EVENT_RESOURCES_LIST_CHANGED, OnResourcesListChanged);
+  EventBus.Unsubscribe(MCP_EVENT_PROMPTS_LIST_CHANGED, OnPromptsListChanged);
+  TSynLog.Add.Log(sllInfo, 'Stdio transport unsubscribed from EventBus notifications');
 end;
 
 end.
