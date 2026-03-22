@@ -85,12 +85,12 @@ Los tres provienen del proyecto [delphi-lookup](https://github.com/JavierusTk/de
 
 ### Rutas Sandboxed
 
-Los tools que acceden al sistema de archivos están restringidos a:
+Los tools que acceden al sistema de archivos están restringidos a las rutas listadas en `.SandboxedPaths`, ubicado en el mismo directorio que `MCPServer.exe`. El archivo por defecto contiene:
 - `D:\My Projects`
 - `D:\ECL`
 - `D:\VCL`
 
-Para cambiarlas, editar la constante `ALLOWED_ROOTS` en `src/Tools/MCP.Tool.BuildService.pas`.
+Para cambiarlas, editar `.SandboxedPaths` — una ruta por línea, `#` para comentarios. Los cambios se detectan automáticamente en la siguiente llamada al tool — no es necesario reiniciar.
 
 ### Estructura del Proyecto Actualizada
 

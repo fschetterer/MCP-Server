@@ -27,12 +27,9 @@ const
   /// Default build timeout (milliseconds)
   BUILD_TIMEOUT_MS = 300000;
 
-  /// Allowed working directories (security measure)
-  ALLOWED_ROOTS: array[0..2] of RawUtf8 = (
-    'D:\My Projects',
-    'D:\ECL',
-    'D:\VCL'
-  );
+/// Load (or reload) allowed paths from .SandboxedPaths file next to the exe.
+/// Falls back to built-in defaults if file not found.
+procedure LoadSandboxedPaths;
 
 var
   /// Global authentication token for build service tools
@@ -106,6 +103,73 @@ uses
   Windows;
 {$ENDIF}
 
+const
+  FALLBACK_ROOTS: array[0..2] of RawUtf8 = (
+    'D:\My Projects', 'D:\ECL', 'D:\VCL');
+
+var
+  g_AllowedRoots: TRawUtf8DynArray;
+  g_SandboxedPathsMTime: TUnixTime;  // 0 = not yet loaded
+  g_AllowedRootsLock: TLightLock;   // zero-init spin-lock, no Init() needed
+
+function GetSandboxedPathsFile: TFileName;
+begin
+  Result := Utf8ToString(Executable.ProgramFilePath) + '.SandboxedPaths';
+end;
+
+procedure LoadSandboxedPaths;
+var
+  FileName: TFileName;
+  MTime: TUnixTime;
+  SL: TStringList;
+  Roots: TRawUtf8DynArray;
+  i, Count: Integer;
+  Line: string;
+begin
+  FileName := GetSandboxedPathsFile;
+  MTime := FileAgeToUnixTimeUtc(FileName);
+
+  if MTime = 0 then
+  begin
+    // File not found - use fallback defaults
+    SetLength(Roots, Length(FALLBACK_ROOTS));
+    for i := 0 to High(FALLBACK_ROOTS) do
+      Roots[i] := FALLBACK_ROOTS[i];
+    TSynLog.Add.Log(sllDebug,
+      'SandboxedPaths: file not found at %, using defaults', [FileName]);
+  end
+  else
+  begin
+    SL := TStringList.Create;
+    try
+      SL.LoadFromFile(FileName);
+      Count := 0;
+      SetLength(Roots, SL.Count);
+      for i := 0 to SL.Count - 1 do
+      begin
+        Line := Trim(SL[i]);
+        if (Line = '') or (Line[1] = '#') then
+          Continue;
+        Roots[Count] := StringToUtf8(Line);
+        Inc(Count);
+      end;
+      SetLength(Roots, Count);
+    finally
+      SL.Free;
+    end;
+    TSynLog.Add.Log(sllInfo,
+      'SandboxedPaths: loaded % paths from %', [Length(Roots), FileName]);
+  end;
+
+  g_AllowedRootsLock.Lock;
+  try
+    g_AllowedRoots := Roots;
+    g_SandboxedPathsMTime := MTime;
+  finally
+    g_AllowedRootsLock.UnLock;
+  end;
+end;
+
 { TMCPToolBuildServiceBase }
 
 constructor TMCPToolBuildServiceBase.Create;
@@ -134,17 +198,30 @@ var
   i: Integer;
   NormPath, UpperPath, UpperRoot: RawUtf8;
 begin
+  // Hot reload: if file mtime changed, reload (cheap OS stat on every call)
+  if FileAgeToUnixTimeUtc(GetSandboxedPathsFile) <> g_SandboxedPathsMTime then
+    LoadSandboxedPaths;
+
   Result := False;
   if Path = '' then
     Exit(True); // Empty path is allowed (uses current dir)
 
   NormPath := StringReplaceAll(Path, '/', '\');
   UpperPath := UpperCaseU(NormPath);
-  for i := Low(ALLOWED_ROOTS) to High(ALLOWED_ROOTS) do
-  begin
-    UpperRoot := UpperCaseU(ALLOWED_ROOTS[i]);
-    if IdemPChar(Pointer(UpperPath), Pointer(UpperRoot)) then
-      Exit(True);
+
+  g_AllowedRootsLock.Lock;
+  try
+    for i := 0 to High(g_AllowedRoots) do
+    begin
+      UpperRoot := UpperCaseU(g_AllowedRoots[i]);
+      if IdemPChar(Pointer(UpperPath), Pointer(UpperRoot)) then
+      begin
+        Result := True;
+        Break;
+      end;
+    end;
+  finally
+    g_AllowedRootsLock.UnLock;
   end;
 end;
 
@@ -303,5 +380,8 @@ function IsLspEnabled: Boolean;
 begin
   Result := g_LspEnabled;
 end;
+
+initialization
+  LoadSandboxedPaths;
 
 end.

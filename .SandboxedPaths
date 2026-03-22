@@ -1,0 +1,7 @@
+# Allowed working directories for sandboxed tools
+# (delphi_build, windows_exec, windows_dir, windows_exists)
+# One path per line. Lines starting with # are comments. Blank lines are ignored.
+# Changes are picked up automatically on the next tool call - no restart required.
+D:\My Projects
+D:\ECL
+D:\VCL

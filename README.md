@@ -85,12 +85,12 @@ All three are from the [delphi-lookup](https://github.com/JavierusTk/delphi-look
 
 ### Sandboxed Paths
 
-Tools that access the filesystem are restricted to:
+Tools that access the filesystem are restricted to the paths listed in `.SandboxedPaths` in the same directory as `MCPServer.exe`. The default file contains:
 - `D:\My Projects`
 - `D:\ECL`
 - `D:\VCL`
 
-To change these, edit the `ALLOWED_ROOTS` constant in `src/Tools/MCP.Tool.BuildService.pas`.
+To change these, edit `.SandboxedPaths` — one path per line, `#` for comments. Changes are picked up automatically on the next tool call — no restart required.
 
 ### Updated Project Structure
 
