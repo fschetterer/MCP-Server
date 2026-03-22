@@ -1,4 +1,4 @@
-﻿/// MCP Core Manager
+/// MCP Core Manager
 // - Handles initialize, ping, and other core MCP methods
 unit MCP.Manager.Core;
 
@@ -35,7 +35,8 @@ type
     /// IMCPCapabilityManager implementation
     function GetCapabilityName: RawUtf8;
     function HandlesMethod(const Method: RawUtf8): Boolean;
-    function ExecuteMethod(const Method: RawUtf8; const Params: Variant): Variant;
+    function ExecuteMethod(const Method: RawUtf8; const Params: Variant;
+      const SessionId: RawUtf8): Variant;
     /// Core methods
     function NegotiateProtocolVersion(const ClientVersion: RawUtf8): RawUtf8;
     function Initialize(const Params: Variant): Variant;
@@ -84,7 +85,7 @@ begin
 end;
 
 function TMCPCoreManager.ExecuteMethod(const Method: RawUtf8;
-  const Params: Variant): Variant;
+  const Params: Variant; const SessionId: RawUtf8): Variant;
 begin
   if IdemPropNameU(Method, 'initialize') then
     Result := Initialize(Params)

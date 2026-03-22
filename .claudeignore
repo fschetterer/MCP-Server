@@ -1,0 +1,4 @@
+# Claude Code ignore patterns - these files will not be read by Claude
+# Use this to exclude files from context without adding them to .gitignore
+
+.DockerInit.sh

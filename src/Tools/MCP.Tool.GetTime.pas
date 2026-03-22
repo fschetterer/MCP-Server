@@ -24,7 +24,8 @@ type
     function BuildInputSchema: Variant; override;
   public
     constructor Create; override;
-    function Execute(const Arguments: Variant): Variant; override;
+    function Execute(const Arguments: Variant;
+      const SessionId: RawUtf8): Variant; override;
   end;
 
 implementation
@@ -70,7 +71,8 @@ begin
   TDocVariantData(Result).AddValue('required', Required);
 end;
 
-function TMCPToolGetTime.Execute(const Arguments: Variant): Variant;
+function TMCPToolGetTime.Execute(const Arguments: Variant;
+  const SessionId: RawUtf8): Variant;
 var
   ArgsDoc: PDocVariantData;
   Format: RawUtf8;

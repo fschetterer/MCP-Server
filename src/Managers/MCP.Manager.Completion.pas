@@ -57,7 +57,8 @@ type
     /// IMCPCapabilityManager implementation
     function GetCapabilityName: RawUtf8;
     function HandlesMethod(const Method: RawUtf8): Boolean;
-    function ExecuteMethod(const Method: RawUtf8; const Params: Variant): Variant;
+    function ExecuteMethod(const Method: RawUtf8; const Params: Variant;
+      const SessionId: RawUtf8): Variant;
     /// Complete an argument value
     // - Ref: reference object with type (ref/prompt or ref/resource) and name/uri
     // - Argument: object with name and value of the argument being completed
@@ -104,7 +105,7 @@ begin
 end;
 
 function TMCPCompletionManager.ExecuteMethod(const Method: RawUtf8;
-  const Params: Variant): Variant;
+  const Params: Variant; const SessionId: RawUtf8): Variant;
 var
   ParamsDoc: PDocVariantData;
   Ref, Argument, Context: Variant;

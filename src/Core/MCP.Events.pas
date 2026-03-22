@@ -166,13 +166,13 @@ end;
 
 destructor TMCPEventBus.Destroy;
 begin
-  EnterCriticalSection(fLock);
-  try
-    SetLength(fSubscriptions, 0);
-    SetLength(fPendingEvents, 0);
-  finally
-    LeaveCriticalSection(fLock);
-  end;
+  // FIX: Removed EnterCriticalSection(fLock) here. During class destructor
+  // teardown (unit finalization), acquiring the lock is unnecessary and can
+  // cause an AV if the critical section or managed fields are in a partially
+  // finalized state. The singleton is being destroyed — no concurrent access
+  // is possible at this point.
+  fSubscriptions := nil;
+  fPendingEvents := nil;
   DeleteCriticalSection(fLock);
   inherited;
 end;
@@ -224,19 +224,30 @@ end;
 
 procedure TMCPEventBus.Unsubscribe(const EventType: RawUtf8; Callback: TMCPEventCallback);
 var
-  i: PtrInt;
+  i, j, n: PtrInt;
 begin
   EnterCriticalSection(fLock);
   try
-    for i := High(fSubscriptions) downto 0 do
+    n := Length(fSubscriptions);
+    for i := 0 to n - 1 do
       if IdemPropNameU(fSubscriptions[i].EventType, EventType) and
          (@fSubscriptions[i].Callback = @Callback) then
       begin
-        // Remove by shifting remaining elements
-        if i < High(fSubscriptions) then
-          Move(fSubscriptions[i + 1], fSubscriptions[i],
-            (High(fSubscriptions) - i) * SizeOf(TMCPEventSubscription));
-        SetLength(fSubscriptions, Length(fSubscriptions) - 1);
+        // FIX: Original code used Move() to shift elements down:
+        //   Move(fSubscriptions[i+1], fSubscriptions[i],
+        //     (High(fSubscriptions) - i) * SizeOf(TMCPEventSubscription));
+        // Move() performs a raw bitwise copy that bypasses reference counting
+        // for managed types. TMCPEventSubscription contains RawUtf8 (EventType),
+        // which is reference-counted. After Move(), two array slots share the
+        // same string pointer without adjusting the refcount. When SetLength
+        // finalizes the truncated slot, it decrements the refcount incorrectly.
+        // This corrupts the heap and causes an AV later — typically during
+        // destructor cleanup when the remaining elements are finalized.
+        // The fix uses element-by-element assignment, which properly handles
+        // the RawUtf8 reference counting via compiler-generated copy semantics.
+        for j := i to n - 2 do
+          fSubscriptions[j] := fSubscriptions[j + 1];
+        SetLength(fSubscriptions, n - 1);
         TSynLog.Add.Log(sllDebug, 'EventBus: Unsubscribed from [%]', [EventType]);
         Exit;
       end;

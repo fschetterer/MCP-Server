@@ -31,7 +31,7 @@ uses
   mormot.crypt.secure,
   MCP.Types,
   MCP.Transport.Base,
-  MCP.Events;
+  MCP.Events, System.StrUtils;
 
 const
   /// Content-Type for Server-Sent Events
@@ -43,8 +43,8 @@ const
   /// Maximum number of sessions to track
   MAX_SESSIONS = 10000;
 
-  /// Session timeout in seconds (30 minutes)
-  SESSION_TIMEOUT_SECONDS = 1800;
+  /// Session timeout in seconds (2 hours)
+  SESSION_TIMEOUT_SECONDS = 7200;
 
   /// Default SSE keepalive interval in milliseconds (30 seconds)
   DEFAULT_SSE_KEEPALIVE_INTERVAL_MS = 30000;
@@ -82,6 +82,8 @@ type
     LastActivityAt: TDateTime;
     /// Whether the session has been initialized (received notifications/initialized)
     Initialized: Boolean;
+    /// Whether this session has authenticated (token validated once)
+    Authenticated: Boolean;
     /// Whether this session is active
     Active: Boolean;
   end;
@@ -117,11 +119,12 @@ type
     fSSEConnections: TMCPSSEConnectionArray;
     fSSEConnectionCount: Integer;
     fSSELock: TRTLCriticalSection;
+    fSSEKeepaliveThread: TMCPSSEKeepaliveThread;
+    fSSEKeepaliveIntervalMs: Cardinal;
+  class var
     fSessions: TMCPSessionArray;
     fSessionCount: Integer;
     fSessionLock: TRTLCriticalSection;
-    fSSEKeepaliveThread: TMCPSSEKeepaliveThread;
-    fSSEKeepaliveIntervalMs: Cardinal;
     /// Main request handler
     function OnRequest(Ctxt: THttpServerRequestAbstract): Cardinal;
     /// Handle GET request - establish SSE stream
@@ -153,22 +156,22 @@ type
     /// Handle DELETE request - terminate session
     function HandleDelete(Ctxt: THttpServerRequestAbstract): Cardinal;
     /// Create a new session with given session ID
-    function CreateSession(const SessionId: RawUtf8;
+    class function CreateSession(const SessionId: RawUtf8;
       const ProtocolVersion: RawUtf8): Boolean;
-    /// Find a session by ID
-    function FindSession(const SessionId: RawUtf8): Integer;
+    /// Find a session by ID (caller must hold fSessionLock)
+    class function FindSession(const SessionId: RawUtf8): Integer;
     /// Validate session ID from request
-    function ValidateSession(const SessionId: RawUtf8): Boolean;
+    class function ValidateSession(const SessionId: RawUtf8): Boolean;
     /// Mark session as initialized
-    procedure SetSessionInitialized(const SessionId: RawUtf8);
+    class procedure SetSessionInitialized(const SessionId: RawUtf8);
     /// Update session last activity timestamp
-    procedure TouchSession(const SessionId: RawUtf8);
+    class procedure TouchSession(const SessionId: RawUtf8);
     /// Terminate a session
-    function TerminateSession(const SessionId: RawUtf8): Boolean;
+    class function TerminateSession(const SessionId: RawUtf8): Boolean;
     /// Remove SSE connections for a session
     procedure RemoveSSEConnectionsForSession(const SessionId: RawUtf8);
     /// Clean up expired sessions
-    procedure CleanupExpiredSessions;
+    class procedure CleanupExpiredSessions;
     /// Check if request requires an active session
     function RequiresSession(const Method: RawUtf8): Boolean;
     /// Validate and return protocol version from request
@@ -196,6 +199,10 @@ type
     /// Unsubscribe from event bus notifications
     procedure UnsubscribeFromEventBus;
   public
+    /// Check if a session has been authenticated (token validated at least once)
+    class function IsSessionAuthenticated(const SessionId: RawUtf8): Boolean;
+    /// Mark a session as authenticated (caches successful token validation)
+    class procedure SetSessionAuthenticated(const SessionId: RawUtf8);
     /// Create HTTP transport with given configuration
     constructor Create(const AConfig: TMCPTransportConfig); override;
     /// Destroy the transport
@@ -285,11 +292,8 @@ constructor TMCPHttpTransport.Create(const AConfig: TMCPTransportConfig);
 begin
   inherited Create(AConfig);
   InitializeCriticalSection(fSSELock);
-  InitializeCriticalSection(fSessionLock);
   SetLength(fSSEConnections, 0);
-  SetLength(fSessions, 0);
   fSSEConnectionCount := 0;
-  fSessionCount := 0;
   // Use configured keepalive interval, or default if not set
   if AConfig.SSEKeepaliveIntervalMs > 0 then
     fSSEKeepaliveIntervalMs := AConfig.SSEKeepaliveIntervalMs
@@ -303,7 +307,6 @@ begin
   if fActive then
     Stop;
   DeleteCriticalSection(fSSELock);
-  DeleteCriticalSection(fSessionLock);
   inherited;
 end;
 
@@ -828,24 +831,16 @@ begin
     end;
   end;
 
-  // Check if client accepts SSE for streaming response
-  if AcceptsSSE(Ctxt) then
-  begin
-    // Return response as SSE event
-    Ctxt.OutContent := FormatSSEData(ResponseBody);
-    Ctxt.OutContentType := SSE_CONTENT_TYPE;
-    Ctxt.OutCustomHeaders := 'Cache-Control: no-cache'#13#10;
-  end
-  else
-  begin
-    // Regular JSON response
-    Ctxt.OutContent := ResponseBody;
-    Ctxt.OutContentType := JSON_CONTENT_TYPE;
-  end;
+  // Always return plain JSON for POST responses.
+  // Returning text/event-stream here causes clients (e.g. Claude CLI) to treat
+  // the connection as a persistent SSE stream and wait indefinitely.
+  Ctxt.OutContent := ResponseBody;
+  Ctxt.OutContentType := JSON_CONTENT_TYPE;
 
-  if fSessionId <> '' then
+  if fSessionId <> '' then begin
     Ctxt.OutCustomHeaders := Ctxt.OutCustomHeaders +
       FormatUtf8('Mcp-Session-Id: %'#13#10, [fSessionId]);
+  end;
 
   TSynLog.Add.Log(sllDebug, 'HTTP Response: %', [ResponseBody]);
 
@@ -1004,7 +999,7 @@ begin
   end;
 end;
 
-function TMCPHttpTransport.CreateSession(const SessionId: RawUtf8;
+class function TMCPHttpTransport.CreateSession(const SessionId: RawUtf8;
   const ProtocolVersion: RawUtf8): Boolean;
 var
   i: Integer;
@@ -1066,7 +1061,7 @@ begin
   end;
 end;
 
-function TMCPHttpTransport.FindSession(const SessionId: RawUtf8): Integer;
+class function TMCPHttpTransport.FindSession(const SessionId: RawUtf8): Integer;
 var
   i: Integer;
 begin
@@ -1083,7 +1078,7 @@ begin
     end;
 end;
 
-function TMCPHttpTransport.ValidateSession(const SessionId: RawUtf8): Boolean;
+class function TMCPHttpTransport.ValidateSession(const SessionId: RawUtf8): Boolean;
 var
   idx: Integer;
   ElapsedSeconds: Double;
@@ -1107,8 +1102,7 @@ begin
         [SessionId, Round(ElapsedSeconds)]);
       fSessions[idx].Active := False;
       Dec(fSessionCount);
-      RemoveSSEConnectionsForSession(SessionId);
-      Exit;
+      Exit; // SSE connections for this session will self-clean on next use
     end;
 
     Result := True;
@@ -1117,7 +1111,7 @@ begin
   end;
 end;
 
-procedure TMCPHttpTransport.SetSessionInitialized(const SessionId: RawUtf8);
+class procedure TMCPHttpTransport.SetSessionInitialized(const SessionId: RawUtf8);
 var
   idx: Integer;
 begin
@@ -1138,7 +1132,46 @@ begin
   end;
 end;
 
-procedure TMCPHttpTransport.TouchSession(const SessionId: RawUtf8);
+class procedure TMCPHttpTransport.SetSessionAuthenticated(const SessionId: RawUtf8);
+var
+  idx: Integer;
+begin
+  if SessionId = '' then
+    Exit;
+
+  EnterCriticalSection(fSessionLock);
+  try
+    idx := FindSession(SessionId);
+    if idx >= 0 then
+    begin
+      fSessions[idx].Authenticated := True;
+      fSessions[idx].LastActivityAt := Now;
+      TSynLog.Add.Log(sllDebug, 'Session marked as authenticated: %', [SessionId]);
+    end;
+  finally
+    LeaveCriticalSection(fSessionLock);
+  end;
+end;
+
+class function TMCPHttpTransport.IsSessionAuthenticated(const SessionId: RawUtf8): Boolean;
+var
+  idx: Integer;
+begin
+  Result := False;
+  if SessionId = '' then
+    Exit;
+
+  EnterCriticalSection(fSessionLock);
+  try
+    idx := FindSession(SessionId);
+    if idx >= 0 then
+      Result := fSessions[idx].Authenticated;
+  finally
+    LeaveCriticalSection(fSessionLock);
+  end;
+end;
+
+class procedure TMCPHttpTransport.TouchSession(const SessionId: RawUtf8);
 var
   idx: Integer;
 begin
@@ -1155,7 +1188,7 @@ begin
   end;
 end;
 
-function TMCPHttpTransport.TerminateSession(const SessionId: RawUtf8): Boolean;
+class function TMCPHttpTransport.TerminateSession(const SessionId: RawUtf8): Boolean;
 var
   idx: Integer;
 begin
@@ -1181,13 +1214,7 @@ begin
     LeaveCriticalSection(fSessionLock);
   end;
 
-  // Remove any SSE connections associated with this session
-  if Result then
-    RemoveSSEConnectionsForSession(SessionId);
-
-  // Clear transport session ID if it matches
-  if fSessionId = SessionId then
-    fSessionId := '';
+  // Note: SSE connections for this session will self-clean on next use
 end;
 
 procedure TMCPHttpTransport.RemoveSSEConnectionsForSession(const SessionId: RawUtf8);
@@ -1219,7 +1246,7 @@ begin
       [RemovedCount, SessionId]);
 end;
 
-procedure TMCPHttpTransport.CleanupExpiredSessions;
+class procedure TMCPHttpTransport.CleanupExpiredSessions;
 var
   i: Integer;
   ElapsedSeconds: Double;
@@ -1238,7 +1265,6 @@ begin
       begin
         TSynLog.Add.Log(sllDebug, 'Cleaning up expired session: %',
           [fSessions[i].SessionId]);
-        RemoveSSEConnectionsForSession(fSessions[i].SessionId);
         fSessions[i].Active := False;
         fSessions[i].SessionId := '';
         Dec(fSessionCount);
@@ -1290,16 +1316,12 @@ begin
     end
     else
     begin
-      // Unsupported version - reject with server error
-      Result := False;
-      ProtocolVersion := '';
-      ErrorResponse := CreateJsonRpcError(
-        Null,
-        JSONRPC_SERVER_ERROR,
-        FormatUtf8('Unsupported protocol version: %. Supported versions: %',
-          [HeaderVersion, MCP_SUPPORTED_VERSIONS]));
-      TSynLog.Add.Log(sllWarning,
-        'Unsupported Mcp-Protocol-Version: %', [HeaderVersion]);
+      // Unknown version - accept anyway, consistent with NegotiateProtocolVersion
+      // which echoes back any client version. Actual feature support is determined
+      // by the capabilities object, not the version string.
+      ProtocolVersion := HeaderVersion;
+      TSynLog.Add.Log(sllDebug,
+        'Unknown Mcp-Protocol-Version: %, accepting (negotiated)', [HeaderVersion]);
     end;
   end;
 end;
@@ -1482,5 +1504,13 @@ begin
 
   TSynLog.Add.Log(sllDebug, 'HTTP Transport unsubscribed from event bus notifications');
 end;
+
+initialization
+  InitializeCriticalSection(TMCPHttpTransport.fSessionLock);
+  SetLength(TMCPHttpTransport.fSessions, 0);
+  TMCPHttpTransport.fSessionCount := 0;
+
+finalization
+  DeleteCriticalSection(TMCPHttpTransport.fSessionLock);
 
 end.

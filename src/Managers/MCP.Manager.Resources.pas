@@ -86,7 +86,8 @@ type
     /// IMCPCapabilityManager implementation
     function GetCapabilityName: RawUtf8;
     function HandlesMethod(const Method: RawUtf8): Boolean;
-    function ExecuteMethod(const Method: RawUtf8; const Params: Variant): Variant;
+    function ExecuteMethod(const Method: RawUtf8; const Params: Variant;
+      const SessionId: RawUtf8): Variant;
     /// List all registered resources (with pagination)
     // - Cursor: opaque string for pagination (empty for first page)
     // - Limit: maximum number of resources to return (default 100)
@@ -286,7 +287,7 @@ begin
 end;
 
 function TMCPResourcesManager.ExecuteMethod(const Method: RawUtf8;
-  const Params: Variant): Variant;
+  const Params: Variant; const SessionId: RawUtf8): Variant;
 var
   ParamsDoc: PDocVariantData;
   Cursor, Uri: RawUtf8;

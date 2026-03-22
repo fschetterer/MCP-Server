@@ -1,10 +1,150 @@
-# mORMot2 MCP Server
+# Delphi MCP Server
 
 [🇪🇸 Leer en español](README.es.md)
 
-High-performance [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server implementation using the [mORMot2](https://github.com/synopse/mORMot2) framework.
+High-performance [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Delphi, built on the [mORMot2](https://github.com/synopse/mORMot2) framework.
 
-**Implements MCP Specification 2025-06-18** with full support for bidirectional notifications via SSE.
+**Implements MCP Specification 2025-06-18** (also supports 2025-11-25, 2025-03-26, 2024-11-05) with full support for bidirectional notifications via SSE.
+
+## What's New (Fork)
+
+This fork targets **Delphi only** (12+ Athens/Florence). Lazarus/FPC files have been removed.
+
+### Why Lookup & LSP in a Container?
+
+The `delphi_lookup` and LSP tools (`delphi_hover`, `delphi_definition`, `delphi_references`, `delphi_document_symbols`) provide **read-only access to Delphi symbol information** that lives outside the container's filesystem. Since AI coding agents typically run in sandboxed containers without access to the Windows host where Delphi is installed, these tools bridge that gap — the MCP server runs on the Windows host and exposes symbol navigation over the protocol, so the agent can resolve types, find declarations, and trace references without needing direct access to the Delphi RTL/VCL source or compiled DCUs.
+
+This pairs well with [DelphiAST_MCP](https://github.com/fschetterer/DelphiAST_MCP), a companion MCP server that provides structural code analysis (AST parsing, type detail, call graphs, inheritance chains) for Delphi projects. Together they give an AI agent a complete picture: **DelphiAST_MCP** for understanding project structure and code flow, and **this server** for deep symbol resolution against the full Delphi ecosystem including third-party libraries.
+
+### Authentication
+
+A random 32-hex token is generated on startup and displayed in the console. Clients must pass this token as the `token` parameter in every tool call. Disable with `--no-auth` or toggle at runtime via the console menu.
+
+### Additional Command Line Options
+
+```bash
+MCPServer.exe                          # HTTP on port 3000 (default)
+MCPServer.exe --port=8080              # Custom port
+MCPServer.exe --transport=stdio        # For stdio MCP clients
+MCPServer.exe --no-auth                # Disable authentication
+MCPServer.exe --daemon                 # No console menu (headless)
+```
+
+### HTTPS / TLS
+
+```bash
+MCPServer.exe --transport=http --tls-self-signed
+MCPServer.exe --transport=http --tls --cert=server.crt --key=server.key
+MCPServer.exe --transport=http --tls --cert=server.crt --key=server.key --key-password=secret
+```
+
+TLS uses mORMot2's native support: SChannel on Windows (no extra DLLs), OpenSSL on Linux.
+
+### Build Scripts
+
+```bash
+~BuildDEBUG.cmd       # Debug configuration
+~BuildRELEASE.cmd     # Release configuration
+```
+
+**Required**: `mormot2` environment variable pointing to the mORMot2 source directory.
+
+### Delphi Build & System Tools
+
+Native Windows tools (sandboxed to allowed paths):
+
+| Tool | Description |
+|------|-------------|
+| `delphi_build` | Run `~Build*.cmd` scripts with structured error/warning/hint parsing |
+| `delphi_lookup` | Search Delphi symbol databases (.db files) |
+| `delphi_index` | Index Pascal source files into symbol databases |
+| `windows_exec` | Execute Windows commands (sandboxed) |
+| `windows_dir` | List directory contents with pattern filter |
+| `windows_exists` | Check file/directory existence |
+
+### Delphi LSP Tools
+
+Symbol navigation via `delphi-lsp-server.exe` subprocess:
+
+| Tool | Description |
+|------|-------------|
+| `delphi_hover` | Symbol declaration and documentation at a file position |
+| `delphi_definition` | Go-to-definition (file path and line number) |
+| `delphi_references` | Find all references to a symbol across the codebase |
+| `delphi_document_symbols` | List all symbols declared in a file |
+
+### Companion Executables
+
+The following executables must be in the same directory as `MCPServer.exe` (project root):
+
+- `delphi-lookup.exe` — symbol database search
+- `delphi-indexer.exe` — Pascal source indexer
+- `delphi-lsp-server.exe` — LSP symbol navigation
+
+All three are from the [delphi-lookup](https://github.com/JavierusTk/delphi-lookup) project. Follow its setup instructions to create the symbol databases in the `dbs/` subdirectory. All tools use the `database` parameter to resolve `.db` files from `dbs/` automatically (e.g. `"database": "delphi13"` resolves to `dbs\delphi13.db`). Full Windows paths are also accepted.
+
+### Sandboxed Paths
+
+Tools that access the filesystem are restricted to:
+- `D:\My Projects`
+- `D:\ECL`
+- `D:\VCL`
+
+To change these, edit the `ALLOWED_ROOTS` constant in `src/Tools/MCP.Tool.BuildService.pas`.
+
+### Updated Project Structure
+
+```
+MCP-Server/
+├── MCPServer.dpr               # Delphi project file
+├── MCPServer.dproj             # Delphi project options
+├── ~BuildDEBUG.cmd             # Debug build script
+├── src/
+│   ├── Core/
+│   │   ├── MCP.Manager.Registry.pas   # Manager registration & dispatch
+│   │   └── MCP.Events.pas             # Event bus (pub/sub)
+│   ├── Protocol/
+│   │   └── MCP.Types.pas              # Core types, settings, JSON-RPC helpers
+│   ├── Transport/
+│   │   ├── MCP.Transport.Base.pas     # Transport abstraction
+│   │   ├── MCP.Transport.Stdio.pas    # stdio transport
+│   │   └── MCP.Transport.Http.pas     # HTTP + SSE transport
+│   ├── Server/
+│   │   └── MCP.Server.pas             # Legacy HTTP server
+│   ├── Managers/
+│   │   ├── MCP.Manager.Core.pas       # initialize, ping
+│   │   ├── MCP.Manager.Tools.pas      # tools/list, tools/call
+│   │   ├── MCP.Manager.Resources.pas  # resources/*, subscriptions
+│   │   ├── MCP.Manager.Prompts.pas    # prompts/list, prompts/get
+│   │   ├── MCP.Manager.Logging.pas    # logging/setLevel
+│   │   └── MCP.Manager.Completion.pas # completion/complete
+│   ├── Tools/
+│   │   ├── MCP.Tool.Base.pas          # Base tool class
+│   │   ├── MCP.Tool.Echo.pas          # Echo tool
+│   │   ├── MCP.Tool.GetTime.pas       # Get time tool
+│   │   ├── MCP.Tool.BuildService.pas  # Shared base for sandboxed tools
+│   │   ├── MCP.Tool.DelphiBuild.pas   # Delphi build via MSBuild
+│   │   ├── MCP.Tool.DelphiLookup.pas  # Symbol database search
+│   │   ├── MCP.Tool.DelphiIndexer.pas # Pascal source indexer
+│   │   ├── MCP.Tool.LSPClient.pas     # LSP subprocess manager
+│   │   ├── MCP.Tool.DelphiHover.pas   # Symbol hover (via LSP)
+│   │   ├── MCP.Tool.DelphiDefinition.pas    # Go-to-definition (via LSP)
+│   │   ├── MCP.Tool.DelphiReferences.pas    # Find references (via LSP)
+│   │   ├── MCP.Tool.DelphiDocSymbols.pas    # Document symbols (via LSP)
+│   │   ├── MCP.Tool.WindowsExec.pas   # Execute commands (sandboxed)
+│   │   ├── MCP.Tool.WindowsDir.pas    # List directory contents
+│   │   └── MCP.Tool.WindowsExists.pas # Check file/dir existence
+│   ├── Resources/
+│   │   └── MCP.Resource.Base.pas      # Base resource class
+│   └── Prompts/
+│       └── MCP.Prompt.Base.pas        # Base prompt class
+```
+
+---
+
+## Original README — mORMot2 MCP Server
+
+> The content below is from the original upstream repository.
 
 ## Features
 
@@ -13,7 +153,6 @@ High-performance [Model Context Protocol (MCP)](https://modelcontextprotocol.io/
 - **Dual transport support** - stdio and HTTP with SSE
 - **JSON-RPC 2.0** - Full protocol support using `TDocVariant`
 - **Modular architecture** - Easy to extend with custom tools, resources, and prompts
-- **Cross-platform** - Compiles with Delphi and Free Pascal
 
 ### MCP Capabilities
 - **Tools** - Register custom tools with JSON Schema validation and `listChanged` notifications
@@ -24,7 +163,7 @@ High-performance [Model Context Protocol (MCP)](https://modelcontextprotocol.io/
 
 ### Transport Layer
 - **stdio transport** - JSON-RPC newline-delimited, logs to stderr
-- **HTTP transport** - REST API with Server-Sent Events (SSE), CORS, and TLS support
+- **HTTP transport** - REST API with Server-Sent Events (SSE) and CORS support
 - **Session management** - Cryptographic session IDs (128-bit)
 - **SSE notifications** - Real-time bidirectional communication
 - **Keepalive** - Configurable SSE keepalive (default 30s)
@@ -43,59 +182,15 @@ High-performance [Model Context Protocol (MCP)](https://modelcontextprotocol.io/
 ## Requirements
 
 - [mORMot2](https://github.com/synopse/mORMot2) framework
-- Delphi 10.3+ (tested) or Free Pascal 3.2+ (not yet tested)
-
-## Project Structure
-
-```
-mORMot-MCP-Server/
-├── MCPServer.dpr           # Delphi project
-├── MCPServer.lpr           # Free Pascal project
-├── MCPServer.lpi           # Lazarus project
-├── src/
-│   ├── Core/
-│   │   ├── MCP.Manager.Registry.pas   # Manager registration
-│   │   └── MCP.Events.pas             # Event bus (pub/sub)
-│   ├── Protocol/
-│   │   └── MCP.Types.pas              # Core types and settings
-│   ├── Transport/
-│   │   ├── MCP.Transport.Base.pas     # Transport abstraction
-│   │   ├── MCP.Transport.Stdio.pas    # stdio transport
-│   │   └── MCP.Transport.Http.pas     # HTTP + SSE transport
-│   ├── Server/
-│   │   └── MCP.Server.pas             # Legacy HTTP server
-│   ├── Managers/
-│   │   ├── MCP.Manager.Core.pas       # initialize, ping
-│   │   ├── MCP.Manager.Tools.pas      # tools/list, tools/call
-│   │   ├── MCP.Manager.Resources.pas  # resources/*, subscriptions
-│   │   ├── MCP.Manager.Prompts.pas    # prompts/list, prompts/get
-│   │   ├── MCP.Manager.Logging.pas    # logging/setLevel
-│   │   └── MCP.Manager.Completion.pas # completion/complete
-│   ├── Tools/
-│   │   ├── MCP.Tool.Base.pas          # Base tool class
-│   │   ├── MCP.Tool.Echo.pas          # Echo example
-│   │   └── MCP.Tool.GetTime.pas       # GetTime example
-│   ├── Resources/
-│   │   └── MCP.Resource.Base.pas      # Base resource class
-│   └── Prompts/
-│       └── MCP.Prompt.Base.pas        # Base prompt class
-```
+- Delphi 12+ (tested with Athens and Florence)
 
 ## Building
-
-### With Delphi
 
 Open `MCPServer.dproj` in Delphi IDE. Ensure mORMot2 source paths are configured.
 
 ```bash
 # Or from command line
 msbuild MCPServer.dproj /p:Config=Release /p:Platform=Win64
-```
-
-### With Free Pascal / Lazarus
-
-```bash
-lazbuild MCPServer.lpi
 ```
 
 ## Usage
@@ -127,21 +222,6 @@ MCPServer.exe --transport=http
 # Custom port
 MCPServer.exe --transport=http --port=8080
 ```
-
-### HTTPS / TLS
-
-```bash
-# Self-signed certificate (development/testing)
-MCPServer.exe --transport=http --tls-self-signed
-
-# With certificate files
-MCPServer.exe --transport=http --tls --cert=server.crt --key=server.key
-
-# With encrypted private key
-MCPServer.exe --transport=http --tls --cert=server.crt --key=server.key --key-password=secret
-```
-
-TLS uses mORMot2's native support: SChannel on Windows (no extra DLLs), OpenSSL on Linux.
 
 ### SSE Connection
 

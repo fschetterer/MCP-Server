@@ -18,6 +18,7 @@ uses
   mormot.core.rtti,
   MCP.Types,
   MCP.Tool.Base,
+  MCP.Tool.BuildService,
   MCP.Events;
 
 type
@@ -43,11 +44,12 @@ type
     /// IMCPCapabilityManager implementation
     function GetCapabilityName: RawUtf8;
     function HandlesMethod(const Method: RawUtf8): Boolean;
-    function ExecuteMethod(const Method: RawUtf8; const Params: Variant): Variant;
+    function ExecuteMethod(const Method: RawUtf8; const Params: Variant;
+      const SessionId: RawUtf8): Variant;
     /// List all registered tools
     function ListTools: Variant;
     /// Call a specific tool
-    function CallTool(const Params: Variant): Variant;
+    function CallTool(const Params: Variant; const SessionId: RawUtf8): Variant;
   end;
 
 implementation
@@ -171,12 +173,12 @@ begin
 end;
 
 function TMCPToolsManager.ExecuteMethod(const Method: RawUtf8;
-  const Params: Variant): Variant;
+  const Params: Variant; const SessionId: RawUtf8): Variant;
 begin
   if IdemPropNameU(Method, 'tools/list') then
     Result := ListTools
   else if IdemPropNameU(Method, 'tools/call') then
-    Result := CallTool(Params)
+    Result := CallTool(Params, SessionId)
   else
     raise Exception.CreateFmt('Method %s not handled by %s',
       [Method, GetCapabilityName]);
@@ -186,6 +188,8 @@ function TMCPToolsManager.ListTools: Variant;
 var
   Tools, ToolInfo: Variant;
   i: PtrInt;
+  ToolName: RawUtf8;
+  IncludeTool: Boolean;
 begin
   TSynLog.Add.Log(sllInfo, 'MCP tools/list called');
 
@@ -196,11 +200,30 @@ begin
   try
     for i := 0 to High(fTools) do
     begin
-      TDocVariantData(ToolInfo).InitFast;
-      TDocVariantData(ToolInfo).U['name'] := fTools[i].GetName;
-      TDocVariantData(ToolInfo).U['description'] := fTools[i].GetDescription;
-      TDocVariantData(ToolInfo).AddValue('inputSchema', fTools[i].GetInputSchema);
-      TDocVariantData(Tools).AddItem(ToolInfo);
+      ToolName := fTools[i].GetName;
+      IncludeTool := True;
+
+      // Filter based on tool enable/disable settings
+      // Check for indexer tools (delphi_index, delphi_lookup)
+      if PosEx('index', ToolName) > 0 then
+        IncludeTool := IsIndexerEnabled
+      // Check for build tools (delphi_build, windows_exec, windows_dir, windows_exists)
+      else if (PosEx('build', ToolName) > 0) or (PosEx('exec', ToolName) > 0) or
+              (PosEx('dir', ToolName) > 0) or (PosEx('exists', ToolName) > 0) then
+        IncludeTool := IsBuildToolsEnabled
+      // Check for LSP tools (delphi_hover, delphi_definition, delphi_references, delphi_document_symbols)
+      else if (PosEx('hover', ToolName) > 0) or (PosEx('definition', ToolName) > 0) or
+              (PosEx('references', ToolName) > 0) or (PosEx('document_symbols', ToolName) > 0) then
+        IncludeTool := IsLspEnabled;
+
+      if IncludeTool then
+      begin
+        TDocVariantData(ToolInfo).InitFast;
+        TDocVariantData(ToolInfo).U['name'] := ToolName;
+        TDocVariantData(ToolInfo).U['description'] := fTools[i].GetDescription;
+        TDocVariantData(ToolInfo).AddValue('inputSchema', fTools[i].GetInputSchema);
+        TDocVariantData(Tools).AddItem(ToolInfo);
+      end;
     end;
   finally
     LeaveCriticalSection(fLock);
@@ -209,7 +232,8 @@ begin
   TDocVariantData(Result).AddValue('tools', Tools);
 end;
 
-function TMCPToolsManager.CallTool(const Params: Variant): Variant;
+function TMCPToolsManager.CallTool(const Params: Variant;
+  const SessionId: RawUtf8): Variant;
 var
   ParamsDoc: PDocVariantData;
   ToolName: RawUtf8;
@@ -236,7 +260,7 @@ begin
 
   // Execute tool
   try
-    Result := Tool.Execute(Arguments);
+    Result := Tool.Execute(Arguments, SessionId);
   except
     on E: Exception do
     begin

@@ -1,4 +1,4 @@
-/// mORMot2 MCP Server - Console Application
+﻿/// mORMot2 MCP Server - Console Application
 // - High-performance MCP server using mORMot2 framework
 // - Supports multiple transports: stdio, http
 program MCPServer;
@@ -9,7 +9,8 @@ program MCPServer;
 
 uses
   {$I mormot.uses.inc}
-  sysutils,
+  WinApi.Windows,
+  sysutils, strUtils,
   classes,
   mormot.core.base,
   mormot.core.os,
@@ -19,6 +20,7 @@ uses
   mormot.core.rtti,
   mormot.core.variants,
   mormot.core.json,
+  mormot.crypt.core,
   MCP.Types in 'src\Protocol\MCP.Types.pas',
   MCP.Server in 'src\Server\MCP.Server.pas',
   MCP.Manager.Registry in 'src\Core\MCP.Manager.Registry.pas',
@@ -29,6 +31,18 @@ uses
   MCP.Tool.Base in 'src\Tools\MCP.Tool.Base.pas',
   MCP.Tool.Echo in 'src\Tools\MCP.Tool.Echo.pas',
   MCP.Tool.GetTime in 'src\Tools\MCP.Tool.GetTime.pas',
+  MCP.Tool.BuildService in 'src\Tools\MCP.Tool.BuildService.pas',
+  MCP.Tool.DelphiBuild in 'src\Tools\MCP.Tool.DelphiBuild.pas',
+  MCP.Tool.DelphiLookup in 'src\Tools\MCP.Tool.DelphiLookup.pas',
+  MCP.Tool.DelphiIndexer in 'src\Tools\MCP.Tool.DelphiIndexer.pas',
+  MCP.Tool.WindowsExec in 'src\Tools\MCP.Tool.WindowsExec.pas',
+  MCP.Tool.WindowsDir in 'src\Tools\MCP.Tool.WindowsDir.pas',
+  MCP.Tool.WindowsExists in 'src\Tools\MCP.Tool.WindowsExists.pas',
+  MCP.Tool.LSPClient in 'src\Tools\MCP.Tool.LSPClient.pas',
+  MCP.Tool.DelphiHover in 'src\Tools\MCP.Tool.DelphiHover.pas',
+  MCP.Tool.DelphiDefinition in 'src\Tools\MCP.Tool.DelphiDefinition.pas',
+  MCP.Tool.DelphiReferences in 'src\Tools\MCP.Tool.DelphiReferences.pas',
+  MCP.Tool.DelphiDocSymbols in 'src\Tools\MCP.Tool.DelphiDocSymbols.pas',
   MCP.Resource.Base in 'src\Resources\MCP.Resource.Base.pas',
   MCP.Manager.Resources in 'src\Managers\MCP.Manager.Resources.pas',
   MCP.Prompt.Base in 'src\Prompts\MCP.Prompt.Base.pas',
@@ -63,6 +77,7 @@ var
   TransportTypeStr: RawUtf8;
   TransportConfig: TMCPTransportConfig;
   RequestProcessor: TMCPRequestProcessor;
+  NoAuth: Boolean = False; // Flag to disable authentication
 
 { TMCPRequestProcessor }
 
@@ -112,7 +127,7 @@ begin
     end;
 
     Params := TDocVariantData(Request).Value['params'];
-    MethodResult := Manager.ExecuteMethod(Method, Params);
+    MethodResult := Manager.ExecuteMethod(Method, Params, SessionId);
 
     Response := CreateJsonRpcResponse(RequestId);
     if not VarIsEmptyOrNull(MethodResult) then
@@ -148,7 +163,19 @@ begin
   Manager.RegisterTool(TMCPToolEcho);
   Manager.RegisterTool(TMCPToolGetTime);
 
-  // Add more tools here...
+  // Build service tools (Delphi compilation and Windows commands)
+  Manager.RegisterTool(TMCPToolDelphiBuild);
+  Manager.RegisterTool(TMCPToolDelphiLookup);
+  Manager.RegisterTool(TMCPToolDelphiIndexer);
+  Manager.RegisterTool(TMCPToolWindowsExec);
+  Manager.RegisterTool(TMCPToolWindowsDir);
+  Manager.RegisterTool(TMCPToolWindowsExists);
+
+  // LSP tools (delphi-lsp-server.exe subprocess, one process per database)
+  Manager.RegisterTool(TMCPToolDelphiHover);
+  Manager.RegisterTool(TMCPToolDelphiDefinition);
+  Manager.RegisterTool(TMCPToolDelphiReferences);
+  Manager.RegisterTool(TMCPToolDelphiDocSymbols);
 end;
 
 function HasSwitch(const Name: string): Boolean;
@@ -206,6 +233,11 @@ begin
       if I <= ParamCount then
         Settings.Port := StrToIntDef(ParamStr(I), Settings.Port);
     end
+    else if (S = '--no-auth') or (S = '-no-auth') or (S = '/no-auth') then
+    begin
+      // Disable authentication
+      NoAuth := True;
+    end
     else if (Length(S) > 0) and not CharInSet(S[1], ['-', '/']) then
       // Bare number = port
       Settings.Port := StrToIntDef(S, Settings.Port);
@@ -236,6 +268,136 @@ begin
     Settings.SSLEnabled := True;
   end;
 end;
+
+type
+  TConsole = record
+    private
+     class var FLine: integer; FCord: TCoord;
+     class var FStdOut: THandle;
+     class procedure SetCursorPos(Value: TCoord); static;
+     class function GetCursorPos: TCoord; static;
+     class procedure ClearArea(ASize: Cardinal; APosition: TCoord); static;
+     class function GetInfo: TConsoleScreenBufferInfo; static;
+    public
+     class procedure Initialize;  static;
+     class constructor create;
+     class procedure ReSetCursorPos; static;
+    class property CursorPos: TCoord read GetCursorPos write SetCursorPos;
+  end;
+
+class function TConsole.GetInfo: TConsoleScreenBufferInfo;
+begin
+  Win32Check(GetConsoleScreenBufferInfo(FStdOut, Result));
+end;
+
+class function TConsole.GetCursorPos: TCoord;
+begin
+  Result := GetInfo.dwCursorPosition;
+end;
+
+class procedure TConsole.Initialize;
+begin
+  if FLine <> -1 then Exit;
+  FStdOut := GetStdHandle(STD_OUTPUT_HANDLE);
+  FCord   := GetCursorPos;
+  FLine   := FCord.Y;
+end;
+
+class procedure TConsole.ReSetCursorPos;
+var area : TCoord; sz : DWORD;
+begin
+  area.x := 0;
+  area.y := FLine;
+  with GetInfo do sz := dwSize.x * (dwSize.y - FLine);
+  ClearArea(sz, area);
+  SetCursorPos(FCord);
+end;
+
+class procedure TConsole.SetCursorPos(Value: TCoord);
+begin
+  Win32Check(SetConsoleCursorPosition(FStdOut, Value));
+end;
+
+class procedure TConsole.ClearArea(ASize: Cardinal; APosition: TCoord);
+var NumWritten: DWORD;
+const SPACE = ' ';
+begin
+  Win32Check(FillConsoleOutputCharacter(FStdOut, SPACE, ASize, APosition, NumWritten));
+  Win32Check(FillConsoleOutputAttribute(FStdOut, 0, ASize, APosition, NumWritten));
+  Win32Check(SetConsoleCursorPosition(FStdOut, APosition));
+end;
+
+class constructor TConsole.create;
+begin
+  FLine := -1;
+end;
+
+procedure ShowConsoleMenu;
+var
+  Key: string;
+  AuthToken: RawUtf8;
+begin
+  TConsole.Initialize;
+
+  // Show menu after server starts
+  repeat
+    TConsole.ReSetCursorPos;
+    WriteLn;
+    WriteLn('=== MCP Server Console ===');
+    WriteLn('[1] New Auth token    - ', ifthen(IsAuthEnabled, Utf8ToString(GetAuthToken), 'DISABLED'));
+    WriteLn('[2] Toggle No Auth    - ', ifthen(NoAuth, 'auth DISABLED', 'auth required'));
+    WriteLn('[3] Toggle Indexer    - ', ifthen(IsIndexerEnabled, 'enabled', 'DISABLED'));
+    WriteLn('[4] Toggle Build      - ', ifthen(IsBuildToolsEnabled, 'enabled', 'DISABLED'));
+    WriteLn('[5] Toggle LSP        - ', ifthen(IsLspEnabled, 'enabled', 'DISABLED'));
+    WriteLn('[6] Exit cleanly      - graceful shutdown');
+    WriteLn;
+    Write('Select option [1-6]: ');
+
+    ReadLn(Key);
+    if Key <> '' then
+     case Key.Chars[0] of
+      '1': if not NoAuth then // New Auth token
+            begin
+              AuthToken := TAesPrng.Main.FillRandomHex(16);
+              SetAuthToken(AuthToken);
+              // Overwrite line 1 - cursor positioning
+//              Write(#27'[1;1H');  // ANSI: move to line 1, column 1
+//              Write('Authentication token: ', Utf8ToString(AuthToken), #27'[K'); // Clear to EOL
+              WriteLn;
+              WriteLn('Token regenerated. Press Enter to continue...');
+              ReadLn;
+            end
+            else
+            begin
+              WriteLn('Auth is disabled. Enable auth first with option 2.');
+              WriteLn('Press Enter to continue...');
+              ReadLn;
+            end;
+      '2': begin // Toggle auth
+            NoAuth := not NoAuth;
+            if NoAuth then
+            begin
+              SetAuthToken('');
+              TSynLog.Add.Log(sllInfo, 'Authentication DISABLED via console');
+            end
+            else
+            begin
+              AuthToken := TAesPrng.Main.FillRandomHex(16);
+              SetAuthToken(AuthToken);
+              TSynLog.Add.Log(sllInfo, 'Authentication ENABLED via console');
+            end;
+           end;
+      '3': SetIndexerEnabled(not IsIndexerEnabled);
+      '4': SetBuildToolsEnabled(not IsBuildToolsEnabled);
+      '5': SetLspEnabled(not IsLspEnabled);
+      '6': Break;  // Exit
+    else
+        WriteLn('Invalid option. Press Enter to continue...');
+        ReadLn;
+    end;
+  until False;
+end;
+
 
 procedure RunWithTransport;
 var
@@ -276,6 +438,8 @@ begin
 
         if Settings.Port <> 3000 then
           WriteLn('Port: ', Settings.Port);
+        // Limit to LAN
+        Settings.Host := '10.168.1.0';
 
         if Settings.SSLEnabled then
           Protocol := 'https'
@@ -306,9 +470,8 @@ begin
           end
           else
           begin
-            WriteLn('Press Enter to stop (graceful shutdown)...');
-            WriteLn;
-            ReadLn;
+            // Show interactive console menu for HTTP mode
+            ShowConsoleMenu;
             // Graceful shutdown with 5s timeout for pending requests
             WriteLn('Initiating graceful shutdown...');
             ShutdownSuccess := HttpTransport.GracefulShutdown(GRACEFUL_SHUTDOWN_TIMEOUT_MS);
@@ -324,7 +487,51 @@ begin
   end;
 end;
 
+procedure ShowDatabases;
+var
+  SearchRec: TSearchRec;
+  FindResult: Integer;
+  DbPath: string;
+  DbList: TStringList;
+  i: Integer;
+begin
+  DbPath := ExtractFilePath(ParamStr(0)) + 'dbs';
+  if not DirectoryExists(DbPath) then
+  begin
+    WriteLn('Delphi Symbol Databases: (none - dbs\ directory does not exist)');
+    Exit;
+  end;
+
+  DbList := TStringList.Create;
+  try
+    FindResult := FindFirst(DbPath + '\*.db', faAnyFile, SearchRec);
+    try
+      while FindResult = 0 do
+      begin
+        if (SearchRec.Attr and faDirectory) = 0 then
+          DbList.Add(ChangeFileExt(SearchRec.Name, ''));
+        FindResult := FindNext(SearchRec);
+      end;
+    finally
+      FindClose(SearchRec);
+    end;
+
+    if DbList.Count = 0 then
+      WriteLn('Delphi Symbol Databases: (none found in dbs\)')
+    else
+    begin
+      WriteLn('Delphi Symbol Databases:');
+      for i := 0 to DbList.Count - 1 do
+        WriteLn('  - ', DbList[i]);
+    end;
+  finally
+    DbList.Free;
+  end;
+end;
+
 procedure Run;
+var
+  AuthToken: RawUtf8;
 begin
   // Initialize logging
   InitializeLogging;
@@ -335,6 +542,32 @@ begin
 
   // Parse command line
   ParseCommandLine;
+
+  // Generate authentication token if not disabled
+  if not NoAuth then
+  begin
+    AuthToken := TAesPrng.Main.FillRandomHex(16);
+    SetAuthToken(AuthToken);
+    TSynLog.Add.Log(sllInfo, 'Authentication token generated: %', [AuthToken]);
+
+    // Also display in console for HTTP mode
+    {TODO not reequired with the new menu }
+//    if TransportType = mttHttp then
+//      WriteLn('Authentication token: ', Utf8ToString(AuthToken));
+  end
+  else
+  begin
+    SetAuthToken(''); // Clear any existing token
+    TSynLog.Add.Log(sllInfo, 'Authentication DISABLED by --no-auth flag');
+
+    // Also display in console for HTTP mode
+    if TransportType = mttHttp then
+      WriteLn('Authentication DISABLED by --no-auth flag');
+  end;
+  Writeln;
+  // List available Delphi symbol databases
+  ShowDatabases;
+  Writeln;
 
   // Create registry
   Registry := TMCPManagerRegistry.Create;

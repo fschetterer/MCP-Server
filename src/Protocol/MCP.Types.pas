@@ -25,7 +25,8 @@ const
   MCP_PROTOCOL_VERSION_DEFAULT = '2025-03-26';
 
   /// Supported MCP Protocol versions (comma-separated for validation)
-  MCP_SUPPORTED_VERSIONS = '2025-06-18,2025-03-26,2024-11-05';
+  // Note: unknown/newer versions are also accepted (see ValidateProtocolVersion)
+  MCP_SUPPORTED_VERSIONS = '2025-11-25,2025-06-18,2025-03-26,2024-11-05';
 
   /// JSON-RPC 2.0 Error Codes
   JSONRPC_PARSE_ERROR      = -32700;
@@ -54,7 +55,8 @@ type
     /// Returns True if this manager handles the given method
     function HandlesMethod(const Method: RawUtf8): Boolean;
     /// Executes the method with given parameters, returns result as variant
-    function ExecuteMethod(const Method: RawUtf8; const Params: Variant): Variant;
+    function ExecuteMethod(const Method: RawUtf8; const Params: Variant;
+      const SessionId: RawUtf8): Variant;
   end;
 
   /// Interface for the manager registry
@@ -331,10 +333,9 @@ end;
 
 function IsSupportedProtocolVersion(const Version: RawUtf8): Boolean;
 begin
-  // Check if version matches one of the supported versions
-  // Must include 2024-11-05 for backward compatibility with older clients
   Result := (Version <> '') and
-    (IdemPropNameU(Version, MCP_PROTOCOL_VERSION) or
+    (IdemPropNameU(Version, '2025-11-25') or
+     IdemPropNameU(Version, MCP_PROTOCOL_VERSION) or
      IdemPropNameU(Version, MCP_PROTOCOL_VERSION_DEFAULT) or
      IdemPropNameU(Version, '2024-11-05'));
 end;

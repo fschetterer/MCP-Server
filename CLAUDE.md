@@ -4,30 +4,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-mORMot2 MCP Server: a high-performance Model Context Protocol (MCP) server implementing the **2025-06-18 specification**, built on the [mORMot2](https://github.com/synopse/mORMot2) framework. Pure Pascal, no external dependencies beyond mORMot2. Dual-compiler: Delphi 10.3+ and Free Pascal 3.2+.
+mORMot2 MCP Server: a high-performance Model Context Protocol (MCP) server implementing the **2025-06-18 specification** (also supports 2025-11-25, 2025-03-26, 2024-11-05), built on the [mORMot2](https://github.com/synopse/mORMot2) framework. Pure Pascal, no external dependencies beyond mORMot2.
+
+**Output**: `MCPServer.exe` in project root (DCU intermediates: `Win64/Debug/` or `Win64/Release/`)
 
 ## Building
 
-```bash
-# Delphi (command line)
-msbuild MCPServer.dproj /p:Config=Release /p:Platform=Win64
+Use `~BuildDEBUG.cmd` or `~BuildRELEASE.cmd` in the project root. The `delphi_build` tool only runs existing scripts.
 
-# Free Pascal / Lazarus
-lazbuild MCPServer.lpi
+```bash
+# Manual MSBuild
+msbuild MCPServer.dproj /p:Config=Debug /p:Platform=Win64
 ```
 
-**mORMot2 dependency**: Source expected at `W:\mORMot2\` (Windows) / `../mORMot2/` (Lazarus relative path). Subfolders used: `src/core`, `src/lib`, `src/net`, `src/crypt`.
-
-**Output**: `bin/MCPServer.exe` (DCU intermediates: `$(Platform)/$(Config)/`)
+**mORMot2 dependency**: `D:\ECL\mORMot2\src` (set via `mormot2` env var)
 
 ## Running
 
-```bash
-MCPServer.exe --transport=stdio          # For Claude Desktop / CLI integration
-MCPServer.exe --transport=http           # HTTP + SSE on port 3000
-MCPServer.exe --transport=http --port=8080
-MCPServer.exe --transport=http --daemon   # Daemon mode (Ctrl+C to stop)
 ```
+MCPServer.exe                          # HTTP on port 3000 (default)
+MCPServer.exe --port=8080              # Custom port
+MCPServer.exe --no-auth                # Disable authentication
+MCPServer.exe --transport=stdio        # For stdio MCP clients
+MCPServer.exe --daemon                 # No console menu
+```
+
+**Console menu** (when not --daemon): press 1-6 to manage auth token, toggle tools, exit.
+
+### Authentication
+
+By default a random 32-hex token is generated on startup and shown in the console. Clients must pass it as the `token` parameter in every tool call. Disable with `--no-auth` or press [2] in the console menu.
 
 ## Architecture
 
@@ -46,62 +52,87 @@ Client (JSON-RPC 2.0)
 
 | Layer | Location | Purpose |
 |-------|----------|---------|
-| **Protocol** | `src/Protocol/MCP.Types.pas` | Core types, settings record, JSON-RPC helpers, error codes, cancelled request tracking |
-| **Transport** | `src/Transport/` | Pluggable I/O: `TMCPStdioTransport` (stdin/stdout) and `TMCPHttpTransport` (async HTTP + SSE via `THttpAsyncServer`) |
-| **Core** | `src/Core/` | `TMCPManagerRegistry` (method→manager dispatch) and `TMCPEventBus` (thread-safe pub/sub singleton) |
-| **Managers** | `src/Managers/` | One per MCP capability namespace: Core, Tools, Resources, Prompts, Logging, Completion |
-| **Extensions** | `src/Tools/`, `src/Resources/`, `src/Prompts/` | Base classes + example implementations for each extensible capability |
-| **Server** | `src/Server/MCP.Server.pas` | Legacy HTTP server (superseded by transport layer) |
-| **Entry** | `MCPServer.dpr` / `.lpr` | Wiring: creates registry, managers, tools, transport; contains `TMCPRequestProcessor` |
+| **Protocol** | `src/Protocol/MCP.Types.pas` | Core types, settings, JSON-RPC helpers, error codes |
+| **Transport** | `src/Transport/` | `TMCPStdioTransport` and `TMCPHttpTransport` (THttpAsyncServer + SSE) |
+| **Core** | `src/Core/` | `TMCPManagerRegistry` (dispatch) and `TMCPEventBus` (thread-safe pub/sub) |
+| **Managers** | `src/Managers/` | Core, Tools, Resources, Prompts, Logging, Completion |
+| **Tools** | `src/Tools/` | Tool implementations |
+| **Entry** | `MCPServer.dpr` | Wiring, `TMCPRequestProcessor`, console menu |
+
+### Registered Tools
+
+| Tool | Class | Description |
+|------|-------|-------------|
+| `echo` | `TMCPToolEcho` | Echo input back |
+| `get_time` | `TMCPToolGetTime` | Current date/time |
+| `delphi_build` | `TMCPToolDelphiBuild` | Run `~Build*.cmd` scripts, parse errors |
+| `delphi_lookup` | `TMCPToolDelphiLookup` | Search symbol databases (.db) |
+| `delphi_index` | `TMCPToolDelphiIndexer` | Index Pascal source into .db |
+| `windows_exec` | `TMCPToolWindowsExec` | Run Windows commands (sandboxed paths) |
+| `windows_dir` | `TMCPToolWindowsDir` | List directory contents |
+| `windows_exists` | `TMCPToolWindowsExists` | Check file/directory existence |
+| `delphi_hover` | `TMCPToolDelphiHover` | Symbol declaration + docs via LSP |
+| `delphi_definition` | `TMCPToolDelphiDefinition` | Go-to-definition via LSP |
+| `delphi_references` | `TMCPToolDelphiReferences` | Find all references via LSP |
+| `delphi_document_symbols` | `TMCPToolDelphiDocSymbols` | List all symbols in a file via LSP |
+
+**Sandboxed paths** (windows_exec, delphi_build): `D:\My Projects`, `D:\ECL`, `D:\VCL`
+
+### LSP Tools
+
+The four `delphi_*` LSP tools communicate with `delphi-lsp-server.exe` via stdin/stdout pipes.
+
+- **Executable location**: project root (same folder as MCPServer.exe)
+- **Database location**: `dbs\<name>.db` in project root (or full path)
+- `TMCPLSPClient` keeps the subprocess alive across calls (one per database)
+- `TMCPLSPClientStore` is a thread-safe singleton registry
+- Path resolution: searches exe dir first, then parent directory
+
+**Important bug fixed (50ebd5d)**: `RespDoc.Value['result']` returns a reference into a stack-allocated TDocVariantData. Must round-trip through JSON (`ToJson` + `InitJson`) to get an independent copy before the stack frame is freed.
 
 ### Key Design Patterns
 
-**Manager Registry**: Each manager implements `IMCPCapabilityManager` (from `MCP.Types.pas`) with `HandlesMethod()` and `ExecuteMethod()`. The registry iterates managers to find one that handles the incoming method string.
+**Manager Registry**: Each manager implements `IMCPCapabilityManager` with `HandlesMethod()` and `ExecuteMethod()`.
 
-**Event Bus**: `TMCPEventBus.GetInstance` singleton. Managers publish events (`MCP_EVENT_TOOLS_LIST_CHANGED`, `MCP_EVENT_RESOURCES_UPDATED`, etc.), transports subscribe to broadcast SSE notifications. Thread-safe with critical sections; queues events when no subscribers exist.
+**Event Bus**: `TMCPEventBus.GetInstance` singleton. Publish/subscribe for SSE notifications. Thread-safe with critical sections.
 
-**Transport Abstraction**: `IMCPTransport` interface + `TMCPTransportBase` base class providing graceful shutdown (5s timeout), pending request tracking, and signal handling. `TMCPTransportFactory` creates the appropriate transport from config.
+**Transport Abstraction**: `IMCPTransport` + `TMCPTransportBase`. Graceful shutdown (5s timeout), pending request tracking, signal handling.
 
 ### Extending the Server
 
-**Adding a Tool**: Create a unit with a class inheriting `TMCPToolBase` (from `MCP.Tool.Base.pas`). Override `Create` (set `fName`, `fDescription`), `BuildInputSchema` (return JSON Schema as `TDocVariant`), and `Execute` (return via `ToolResultText()` or `ToolResultJson()`). Register in `MCPServer.dpr`: `ToolsManager.RegisterTool(TMCPToolMyTool.Create)`. Also add the unit to the `.dpr` uses clause and `.dproj` file list.
-
-**Adding a Resource**: Inherit `TMCPResourceBase` or use `TMCPTextResource`/`TMCPBlobResource` (from `MCP.Resource.Base.pas`). Register via `ResourcesManager.RegisterResource()`.
-
-**Adding a Prompt**: Inherit `TMCPPromptBase` (from `MCP.Prompt.Base.pas`). Use `AddArgument()` in constructor, implement `BuildMessages()`. Register via `PromptsManager.RegisterPrompt()`.
+**Adding a Tool**: Inherit `TMCPToolBase` (or `TMCPToolBuildServiceBase` for sandboxed tools). Override `Create` (set `fName`, `fDescription`), `BuildInputSchema`, and `Execute`. Register in `MCPServer.dpr` `RegisterTools()`. Add to `.dpr` uses clause and `.dproj` file list.
 
 ### JSON Handling Convention
 
-All JSON is handled through mORMot2's `TDocVariant` — no record-based serialization. Pattern:
 ```pascal
 TDocVariantData(Result).InitFast;
 TDocVariantData(Result).U['field'] := 'value';  // RawUtf8
-TDocVariantData(Result).I['count'] := 42;        // Integer
-TDocVariantData(Result).B['flag'] := True;        // Boolean
+TDocVariantData(Result).I['count'] := 42;
+TDocVariantData(Result).B['flag']  := True;
 TDocVariantData(Result).AddValue('obj', SubVariant);
 ```
 
-### String Type
-
-The codebase uses `RawUtf8` (mORMot2's UTF-8 string type) everywhere, not `string`. Use `StringToUtf8()` / `Utf8ToString()` for conversion at boundaries.
-
-### MCP Protocol Constants
-
-- Protocol version: `MCP_PROTOCOL_VERSION = '2025-06-18'` (also supports `'2025-03-26'`)
-- JSON-RPC errors: `JSONRPC_PARSE_ERROR` (-32700), `JSONRPC_METHOD_NOT_FOUND` (-32601), `JSONRPC_REQUEST_CANCELLED` (-32800), `JSONRPC_RESOURCE_NOT_FOUND` (-32002)
+Use `RawUtf8` everywhere. Convert at boundaries: `StringToUtf8()` / `Utf8ToString()`.
 
 ### HTTP Transport Details
 
-- Endpoint: `GET /mcp` (SSE stream), `POST /mcp` (JSON-RPC requests), `DELETE /mcp` (session termination)
-- 128-bit cryptographic session IDs (via `TAesPrng`)
-- SSE keepalive comments every 30s (configurable)
-- CORS enabled by default (all origins)
+- Endpoints: `GET /mcp` (SSE), `POST /mcp` (JSON-RPC), `DELETE /mcp` (terminate session)
+- 128-bit cryptographic session IDs via `TAesPrng`
+- SSE keepalive every 30s
+- CORS enabled (all origins)
+- POST always returns `application/json` (not SSE-wrapped)
 
-### Initialization Order (in MCPServer.dpr)
+### Protocol Version Negotiation
 
-1. Logging (`TSynLog` with 10MB rotation, 5 files)
-2. Default settings (`InitDefaultSettings`)
-3. Command-line parsing
+Server echoes client's requested version if it's in the supported list, otherwise falls back to `2025-06-18`. Unknown versions are accepted with a debug log (not rejected).
+
+Supported: `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`
+
+### Initialization Order (MCPServer.dpr)
+
+1. Logging (`TSynLog`, 10MB rotation, 5 files, `LOG_VERBOSE`)
+2. `InitDefaultSettings`
+3. `ParseCommandLine`
 4. Registry → CoreManager → LoggingManager → ToolsManager → ResourcesManager → PromptsManager → CompletionManager
-5. Register built-in tools (Echo, GetTime)
-6. Create transport → `RunWithTransport()` (blocks)
+5. `RegisterTools(ToolsManager)`
+6. `RunWithTransport()` (blocks) + console menu thread

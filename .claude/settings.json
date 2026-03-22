@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git config:*)",
+      "Bash(~/workroot/.claude/git-hooks/pre-commit:*)",
+      "Bash(claude config set:*)",
+      "mcp__mcp-server__delphi_build",
+      "mcp__mcp-server__windows_exec",
+      "mcp__mcp-server__windows_dir",
+      "mcp__mcp-server__windows_exists",
+      "mcp__mcp-server__delphi_document_symbols",
+      "mcp__mcp-server__delphi_hover",
+      "mcp__mcp-server__delphi_lookup",
+      "mcp__delphi-ast__get_type_detail",
+      "mcp__delphi-ast__get_source",
+      "mcp__delphi-ast__parse_unit",
+      "mcp__delphi-ast__set_project",
+      "mcp__delphi-ast__find_references",
+      "mcp__delphi-ast__get_status",
+      "Skill(commit)"
+    ]
+  }
+}

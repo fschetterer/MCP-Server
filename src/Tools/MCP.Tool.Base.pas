@@ -1,4 +1,4 @@
-/// MCP Tool Base Classes
+﻿/// MCP Tool Base Classes
 // - Base classes for implementing MCP tools
 unit MCP.Tool.Base;
 
@@ -12,7 +12,8 @@ uses
   mormot.core.text,
   mormot.core.unicode,
   mormot.core.variants,
-  mormot.core.json;
+  mormot.core.json,
+  MCP.Transport.Http;
 
 type
   /// Interface for MCP tools
@@ -21,7 +22,7 @@ type
     function GetName: RawUtf8;
     function GetDescription: RawUtf8;
     function GetInputSchema: Variant;
-    function Execute(const Arguments: Variant): Variant;
+    function Execute(const Arguments: Variant; const SessionId: RawUtf8): Variant;
   end;
 
   /// Base class for MCP tools
@@ -30,12 +31,22 @@ type
     fName: RawUtf8;
     fDescription: RawUtf8;
     function BuildInputSchema: Variant; virtual;
+    /// Check if this tool requires authentication token
+    function RequiresToken: Boolean; virtual;
+    /// Validate authentication token
+    function ValidateToken(const Token: RawUtf8): Boolean; virtual;
+    /// Authenticate this call: checks session cache first, then validates token.
+    // On success caches the result for the session so subsequent calls in the
+    // same session succeed without re-supplying the token.
+    function AuthenticateSession(const Token: RawUtf8;
+      const SessionId: RawUtf8): Boolean; virtual;
   public
     constructor Create; virtual;
     function GetName: RawUtf8;
     function GetDescription: RawUtf8;
     function GetInputSchema: Variant;
-    function Execute(const Arguments: Variant): Variant; virtual; abstract;
+    function Execute(const Arguments: Variant;
+      const SessionId: RawUtf8): Variant; virtual; abstract;
     property Name: RawUtf8 read fName write fName;
     property Description: RawUtf8 read fDescription write fDescription;
   end;
@@ -88,6 +99,35 @@ end;
 constructor TMCPToolBase.Create;
 begin
   inherited Create;
+end;
+
+function TMCPToolBase.RequiresToken: Boolean;
+begin
+  // By default, tools don't require authentication
+  Result := False;
+end;
+
+function TMCPToolBase.ValidateToken(const Token: RawUtf8): Boolean;
+begin
+  // By default, if token isn't required, validation passes
+  Result := not RequiresToken;
+end;
+
+function TMCPToolBase.AuthenticateSession(const Token: RawUtf8;
+  const SessionId: RawUtf8): Boolean;
+begin
+  // Check session cache first (avoids re-validating token on every call)
+  if (SessionId <> '') and TMCPHttpTransport.IsSessionAuthenticated(SessionId) then
+    Result := True
+  else if ValidateToken(Token) then
+  begin
+    // Cache success for this session
+    if SessionId <> '' then
+      TMCPHttpTransport.SetSessionAuthenticated(SessionId);
+    Result := True;
+  end
+  else
+    Result := False;
 end;
 
 function TMCPToolBase.GetName: RawUtf8;

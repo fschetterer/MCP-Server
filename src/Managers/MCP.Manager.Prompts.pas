@@ -37,7 +37,8 @@ type
     /// IMCPCapabilityManager implementation
     function GetCapabilityName: RawUtf8;
     function HandlesMethod(const Method: RawUtf8): Boolean;
-    function ExecuteMethod(const Method: RawUtf8; const Params: Variant): Variant;
+    function ExecuteMethod(const Method: RawUtf8; const Params: Variant;
+      const SessionId: RawUtf8): Variant;
     /// List all registered prompts
     function ListPrompts: Variant;
     /// Get a specific prompt with messages
@@ -153,7 +154,7 @@ begin
 end;
 
 function TMCPPromptsManager.ExecuteMethod(const Method: RawUtf8;
-  const Params: Variant): Variant;
+  const Params: Variant; const SessionId: RawUtf8): Variant;
 var
   ParamsDoc: PDocVariantData;
   Name: RawUtf8;

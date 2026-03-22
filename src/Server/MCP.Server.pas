@@ -1,4 +1,4 @@
-/// MCP HTTP Server using mORMot2 THttpAsyncServer
+﻿/// MCP HTTP Server using mORMot2 THttpAsyncServer
 // - High-performance HTTP server for MCP protocol
 unit MCP.Server;
 
@@ -281,7 +281,7 @@ begin
     Params := TDocVariantData(Request).Value['params'];
 
     // Execute method
-    MethodResult := Manager.ExecuteMethod(Method, Params);
+    MethodResult := Manager.ExecuteMethod(Method, Params, fSessionId);
 
     // Check if initialize returned a session ID
     if (Method = 'initialize') and not VarIsEmptyOrNull(MethodResult) then

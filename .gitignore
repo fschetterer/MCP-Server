@@ -41,3 +41,22 @@ desktop.ini
 
 # Local configuration
 *.local.dproj
+*.log
+
+# Runtime artifacts
+*.synlz
+*.dsv
+lsp-*.bin
+lsp-*.txt
+log-*.txt
+
+# Database files (indexed at runtime)
+dbs/
+
+# Test scripts and output
+test-lsp*
+
+# Claude Code local files
+.claude/settings.local.json
+.claude/handoff/
+.claude/plugins/
