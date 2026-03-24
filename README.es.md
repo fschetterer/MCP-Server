@@ -48,21 +48,21 @@ TLS usa el soporte nativo de mORMot2: SChannel en Windows (sin DLLs extra), Open
 ### Scripts de Compilación
 
 ```bash
-~Build.cmd 23 Debug Win64       # Debug, Delphi 12 Athens
-~Build.cmd 23 Release Win64     # Release
-~Build.cmd 23 NoCodeSite Win64  # Debug sin CodeSite
+.Build.cmd 23 Debug Win64       # Debug, Delphi 12 Athens
+.Build.cmd 23 Release Win64     # Release
+.Build.cmd 23 NoCodeSite Win64  # Debug sin CodeSite
 ```
 
 **Requerido**: variable de entorno `mormot2` apuntando al directorio fuente de mORMot2.
 
 ### Flujo de Compilación: MCP Tool + Claude Code Skill
 
-El **tool MCP `delphi_build`** (parte de este servidor) solo **ejecuta** el script `~Build.cmd` existente y retorna la salida estructurada del compilador. **No** crea scripts.
+El **tool MCP `delphi_build`** (parte de este servidor) solo **ejecuta** el script `.Build.cmd` existente y retorna la salida estructurada del compilador. **No** crea scripts.
 
 El **skill de Claude Code `delphi-build-cmd`** (plugin separado del lado del cliente) **crea** scripts de compilación cuando no existen. Conoce las convenciones de MSBuild, rutas de rsvars.bat, configuración de logs, y mejores prácticas de clean vs incremental.
 
 **Flujo de trabajo:**
-1. Usar `windows_dir` con patrón `~Build.cmd` para buscar el script
+1. Usar `windows_dir` con patrón `.Build.cmd` para buscar el script
 2. Si no existe, el skill `delphi-build-cmd` crea uno
 3. Usar `delphi_build` para ejecutarlo y obtener errores/warnings/hints estructurados
 
@@ -84,7 +84,7 @@ Tools nativos de Windows (sandboxed a rutas permitidas):
 
 | Tool | Descripción |
 |------|-------------|
-| `delphi_build` | Ejecuta `~Build.cmd` con parsing estructurado de errores/warnings/hints |
+| `delphi_build` | Ejecuta `.Build.cmd` con parsing estructurado de errores/warnings/hints |
 | `delphi_lookup` | Busca en bases de datos de símbolos Delphi (archivos .db) |
 | `delphi_index` | Indexa archivos fuente Pascal en bases de datos de símbolos |
 | `windows_exec` | Ejecuta comandos Windows (sandboxed) |
@@ -127,7 +127,7 @@ Para cambiarlas, editar `.SandboxedPaths` — una ruta por línea, `#` para come
 MCP-Server/
 ├── MCPServer.dpr               # Archivo de proyecto Delphi
 ├── MCPServer.dproj             # Opciones de proyecto Delphi
-├── ~Build.cmd                  # Script de compilación parametrizado (RTL CONFIG PLATFORM)
+├── .Build.cmd                  # Script de compilación parametrizado (RTL CONFIG PLATFORM)
 ├── src/
 │   ├── Core/
 │   │   ├── MCP.Manager.Registry.pas   # Registro y despacho de managers

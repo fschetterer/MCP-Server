@@ -37,7 +37,7 @@ begin
   fDescription := 'List directory contents on Windows. Path must be under allowed roots: ' +
     'D:\My Projects, D:\ECL, D:\VCL. ' +
     'Returns JSON with files array and count. ' +
-    'Use pattern to filter results (e.g. *.pas for Pascal sources, ~Build.cmd for build scripts, *.dproj for Delphi projects)';
+    'Use pattern to filter results (e.g. *.pas for Pascal sources, .Build.cmd for build scripts, *.dproj for Delphi projects)';
 end;
 
 function TMCPToolWindowsDir.BuildInputSchema: Variant;

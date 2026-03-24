@@ -10,9 +10,9 @@ mORMot2 MCP Server: a high-performance Model Context Protocol (MCP) server imple
 
 ## Building
 
-Use `~Build.cmd` in the project root. It takes positional parameters: `RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]`.
+Use `.Build.cmd` in the project root. It takes positional parameters: `RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]`.
 
-**`delphi_build` MCP tool vs `delphi-build-cmd` Claude Code skill**: These are **separate components**. The MCP tool (`delphi_build` in `src/Tools/MCP.Tool.DelphiBuild.pas`) is part of the server — it only **runs** existing `.cmd` scripts and parses compiler output. The Claude Code skill (`delphi-build-cmd` in `~/.claude/skills/`) is a **client-side plugin** that lives outside this repo — it **creates** build scripts when none exist. Workflow: (1) use `windows_dir` to check for `~Build.cmd`, (2) if missing, the `delphi-build-cmd` skill creates one, (3) `delphi_build` runs it.
+**`delphi_build` MCP tool vs `delphi-build-cmd` Claude Code skill**: These are **separate components**. The MCP tool (`delphi_build` in `src/Tools/MCP.Tool.DelphiBuild.pas`) is part of the server — it only **runs** existing `.cmd` scripts and parses compiler output. The Claude Code skill (`delphi-build-cmd` in `~/.claude/skills/`) is a **client-side plugin** that lives outside this repo — it **creates** build scripts when none exist. Workflow: (1) use `windows_dir` to check for `.Build.cmd`, (2) if missing, the `delphi-build-cmd` skill creates one, (3) `delphi_build` runs it.
 
 ```bash
 # Manual MSBuild
@@ -66,7 +66,7 @@ Client (JSON-RPC 2.0)
 |------|-------|-------------|
 | `echo` | `TMCPToolEcho` | Echo input back |
 | `get_time` | `TMCPToolGetTime` | Current date/time |
-| `delphi_build` | `TMCPToolDelphiBuild` | Run `~Build.cmd` script, parse errors |
+| `delphi_build` | `TMCPToolDelphiBuild` | Run `.Build.cmd` script, parse errors |
 | `delphi_lookup` | `TMCPToolDelphiLookup` | Search symbol databases (.db) |
 | `delphi_index` | `TMCPToolDelphiIndexer` | Index Pascal source into .db |
 | `windows_exec` | `TMCPToolWindowsExec` | Run Windows commands (sandboxed paths) |

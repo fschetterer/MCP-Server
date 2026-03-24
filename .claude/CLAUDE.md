@@ -10,8 +10,8 @@ High-performance Model Context Protocol (MCP) server implementing specification 
 
 ```bash
 # Using build scripts (recommended)
-~Build.cmd 23 Debug Win64
-~Build.cmd 23 Release Win64
+.Build.cmd 23 Debug Win64
+.Build.cmd 23 Release Win64
 
 # Or manual MSBuild
 msbuild MCPServer.dproj /p:Config=Release /p:Platform=Win64
@@ -111,10 +111,10 @@ MCP_SUPPORTED_VERSIONS = '2025-11-25,2025-06-18,2025-03-26,2024-11-05'
 
 ### Build Scripts
 
-Build scripts live in the project directory with `~Build` prefix:
-- `~Build.cmd` — Parameterized: `RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]`
+Build scripts live in the project directory:
+- `.Build.cmd` — Parameterized: `RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]`
 
-The `delphi_build` MCP tool only **runs** existing scripts — it is part of this server. The `delphi-build-cmd` Claude Code skill **creates** new scripts when none exist — it is a **separate client-side plugin** (`~/.claude/skills/`), not part of this repo. Workflow: (1) `windows_dir` to find `~Build.cmd`, (2) skill creates if missing, (3) `delphi_build` runs it.
+The `delphi_build` MCP tool only **runs** existing scripts — it is part of this server. The `delphi-build-cmd` Claude Code skill **creates** new scripts when none exist — it is a **separate client-side plugin** (`~/.claude/skills/`), not part of this repo. Workflow: (1) `windows_dir` to find `.Build.cmd`, (2) skill creates if missing, (3) `delphi_build` runs it.
 
 ## Code Conventions
 

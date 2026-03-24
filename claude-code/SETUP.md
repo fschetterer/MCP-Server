@@ -11,7 +11,7 @@ This guide configures Claude Code skills shipped with this repo.
 
 ## Install the delphi-build-cmd Skill
 
-The skill teaches Claude Code how to create and maintain Delphi MSBuild scripts (`~Build.cmd`).
+The skill teaches Claude Code how to create and maintain Delphi MSBuild scripts (`.Build.cmd`).
 
 **WSL / Linux:**
 ```bash
@@ -36,5 +36,5 @@ After installation, test:
 ```
 # Ask Claude Code to create a build script for a Delphi project
 # It should use the delphi-build-cmd skill template with required parameters:
-# ~Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]
+# .Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]
 ```

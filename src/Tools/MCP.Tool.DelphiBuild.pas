@@ -43,9 +43,9 @@ begin
   fName := 'delphi_build';
   fDescription := 'Compile a Delphi project by running an existing build script (.cmd). ' +
     'Returns structured errors, warnings, and hints parsed from compiler output. ' +
-    'Build scripts are named ~Build.cmd in the project directory and take positional parameters: ' +
+    'Build scripts are named .Build.cmd in the project directory and take positional parameters: ' +
     'RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]. ' +
-    'Workflow: (1) Use windows_dir with pattern ~Build.cmd to find the script. ' +
+    'Workflow: (1) Use windows_dir with pattern .Build.cmd to find the script. ' +
     '(2) If no script exists, create one using the delphi-build-cmd skill. ' +
     '(3) Run it with this tool. ' +
     '(4) On failure, read the failing source file at the reported line, fix the error, and rebuild. ' +
@@ -65,8 +65,8 @@ begin
   TDocVariantData(Prop).InitFast;
   TDocVariantData(Prop).S['type'] := 'string';
   TDocVariantData(Prop).S['description'] := 'Path to build script (.cmd file). ' +
-      'Scripts are named ~Build.cmd in the project directory. ' +
-      'Use windows_dir with pattern ~Build.cmd to find it';
+      'Scripts are named .Build.cmd in the project directory. ' +
+      'Use windows_dir with pattern .Build.cmd to find it';
   TDocVariantData(Properties).AddValue('script', Prop);
 
   // rtl - Delphi RTL version (1st positional arg)
@@ -83,7 +83,7 @@ begin
   // config - build configuration (2nd positional arg)
   TDocVariantData(Prop).InitFast;
   TDocVariantData(Prop).S['type'] := 'string';
-  TDocVariantData(Prop).S['description'] := 'Build configuration passed as 2nd arg to ~Build.cmd (e.g. Debug, Release, NoCodeSite, _NoCodeSite)';
+  TDocVariantData(Prop).S['description'] := 'Build configuration passed as 2nd arg to .Build.cmd (e.g. Debug, Release, NoCodeSite, _NoCodeSite)';
   TDocVariantData(Prop).S['default'] := 'DEBUG';
   TDocVariantData(EnumArr).InitArray([], JSON_FAST);
   TDocVariantData(EnumArr).AddItem('DEBUG');
@@ -353,7 +353,7 @@ begin
 
   ScriptDir := StringToUtf8(ExtractFilePath(Utf8ToString(Script)));
 
-  // Build command: ~Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]
+  // Build command: .Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]
   // 4th arg (SKIPCLEAN) always empty = clean build
   // 5th arg (SHOWWARNINGS) set when verbosity is not default quiet
   if (Verbosity <> '') and (Verbosity <> 'q') then

@@ -48,21 +48,21 @@ TLS uses mORMot2's native support: SChannel on Windows (no extra DLLs), OpenSSL 
 ### Build Scripts
 
 ```bash
-~Build.cmd 23 Debug Win64       # Debug, Delphi 12 Athens
-~Build.cmd 23 Release Win64     # Release
-~Build.cmd 23 NoCodeSite Win64  # Debug without CodeSite
+.Build.cmd 23 Debug Win64       # Debug, Delphi 12 Athens
+.Build.cmd 23 Release Win64     # Release
+.Build.cmd 23 NoCodeSite Win64  # Debug without CodeSite
 ```
 
 **Required**: `mormot2` environment variable pointing to the mORMot2 source directory.
 
 ### Build Workflow: MCP Tool + Claude Code Skill
 
-The **`delphi_build` MCP tool** (part of this server) only **runs** the existing `~Build.cmd` script and returns structured compiler output. It does **not** create scripts.
+The **`delphi_build` MCP tool** (part of this server) only **runs** the existing `.Build.cmd` script and returns structured compiler output. It does **not** create scripts.
 
 The **`delphi-build-cmd` Claude Code skill** (separate client-side plugin) **creates** build scripts when none exist. It knows the MSBuild conventions, rsvars.bat paths, logging setup, and clean-vs-incremental best practices.
 
 **Workflow:**
-1. Use `windows_dir` with pattern `~Build.cmd` to check for the script
+1. Use `windows_dir` with pattern `.Build.cmd` to check for the script
 2. If no script exists, the `delphi-build-cmd` skill creates one
 3. Use `delphi_build` to run it and get structured errors/warnings/hints
 
@@ -84,7 +84,7 @@ Native Windows tools (sandboxed to allowed paths):
 
 | Tool | Description |
 |------|-------------|
-| `delphi_build` | Run `~Build.cmd` script with structured error/warning/hint parsing |
+| `delphi_build` | Run `.Build.cmd` script with structured error/warning/hint parsing |
 | `delphi_lookup` | Search Delphi symbol databases (.db files) |
 | `delphi_index` | Index Pascal source files into symbol databases |
 | `windows_exec` | Execute Windows commands (sandboxed) |
@@ -127,7 +127,7 @@ To change these, edit `.SandboxedPaths` — one path per line, `#` for comments.
 MCP-Server/
 ├── MCPServer.dpr               # Delphi project file
 ├── MCPServer.dproj             # Delphi project options
-├── ~Build.cmd                  # Parameterized build script (RTL CONFIG PLATFORM)
+├── .Build.cmd                  # Parameterized build script (RTL CONFIG PLATFORM)
 ├── src/
 │   ├── Core/
 │   │   ├── MCP.Manager.Registry.pas   # Manager registration & dispatch

@@ -1,6 +1,6 @@
 ---
 name: delphi-build-cmd
-description: Use when creating or modifying Delphi MSBuild scripts (~Build.cmd),
+description: Use when creating or modifying Delphi MSBuild scripts (.Build.cmd),
   diagnosing stale-DCU or timestamp issues, or setting up build parameters for RTL
   version, config, clean vs incremental, or warning visibility.
 ---
@@ -39,7 +39,7 @@ break the build. Use `/t:Build` (SKIPCLEAN) in that case.
 ## Script Location and Naming
 
 - Place alongside the `.dproj` (project root)
-- Name: `~Build.cmd` — single parameterized script, all args required
+- Name: `.Build.cmd` — single parameterized script, all args required
 - The `~` prefix sorts it to the top of directory listings
 
 ---
@@ -74,9 +74,9 @@ set PLATFORM=%3
 set SKIPCLEAN=%4
 set SHOWWARNINGS=%5
 
-if "%RTL%"=="" (echo Usage: ~Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS] & exit /b 1)
-if "%CONFIG%"=="" (echo Usage: ~Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS] & exit /b 1)
-if "%PLATFORM%"=="" (echo Usage: ~Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS] & exit /b 1)
+if "%RTL%"=="" (echo Usage: .Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS] & exit /b 1)
+if "%CONFIG%"=="" (echo Usage: .Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS] & exit /b 1)
+if "%PLATFORM%"=="" (echo Usage: .Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS] & exit /b 1)
 
 :: ── rsvars ────────────────────────────────────────────────────────────────────
 :: Save CONFIG/PLATFORM — rsvars.bat overwrites them
