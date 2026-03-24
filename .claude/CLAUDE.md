@@ -10,8 +10,8 @@ High-performance Model Context Protocol (MCP) server implementing specification 
 
 ```bash
 # Using build scripts (recommended)
-~BuildDEBUG.cmd
-~BuildRELEASE.cmd
+~Build.cmd 23 Debug Win64
+~Build.cmd 23 Release Win64
 
 # Or manual MSBuild
 msbuild MCPServer.dproj /p:Config=Release /p:Platform=Win64
@@ -21,15 +21,12 @@ msbuild MCPServer.dproj /p:Config=Release /p:Platform=Win64
 
 ## Running the Server
 
-**Stdio transport (for Claude Desktop):**
-```bash
-MCPServer --transport=stdio
-```
-
 **HTTP transport with SSE:**
 ```bash
 MCPServer --transport=http --port=3000
 ```
+
+> **Why no stdio?** This server exists to give sandboxed Claude Code (running in a Linux container) access to Windows-host build tools over the network. Stdio requires the client to spawn the server as a child process — a container can't launch a Windows .exe. For local Windows-only use, the [delphi-lookup](https://github.com/JavierusTk/delphi-lookup) repo already ships Claude Code skills.
 
 ## Architecture
 
@@ -39,7 +36,7 @@ MCPServer --transport=http --port=3000
 
 2. **Event Bus** (`src/Core/MCP.Events.pas`): Thread-safe pub/sub singleton for notifications. Queues events for late subscribers. Standard events include `notifications/tools/list_changed`, `notifications/resources/updated`.
 
-3. **Transport Abstraction** (`src/Transport/`): `IMCPTransport` interface with Stdio and HTTP implementations. HTTP uses `THttpAsyncServer` with SSE streaming and 128-bit crypto session IDs.
+3. **Transport Abstraction** (`src/Transport/`): `IMCPTransport` interface with HTTP implementation. Uses `THttpAsyncServer` with SSE streaming and 128-bit crypto session IDs.
 
 4. **Capability Managers** (`src/Managers/`): Each manager handles a method prefix:
    - `TMCPCoreManager` → initialize, ping
@@ -115,10 +112,9 @@ MCP_SUPPORTED_VERSIONS = '2025-11-25,2025-06-18,2025-03-26,2024-11-05'
 ### Build Scripts
 
 Build scripts live in the project directory with `~Build` prefix:
-- `~BuildDEBUG.cmd` — Debug configuration
-- `~BuildRELEASE.cmd` — Release configuration
+- `~Build.cmd` — Parameterized: `RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]`
 
-The `delphi_build` tool only runs existing scripts. Use the `delphi-build` skill to create new scripts when none exist.
+The `delphi_build` MCP tool only **runs** existing scripts — it is part of this server. The `delphi-build-cmd` Claude Code skill **creates** new scripts when none exist — it is a **separate client-side plugin** (`~/.claude/skills/`), not part of this repo. Workflow: (1) `windows_dir` to find `~Build.cmd`, (2) skill creates if missing, (3) `delphi_build` runs it.
 
 ## Code Conventions
 
@@ -126,5 +122,5 @@ The `delphi_build` tool only runs existing scripts. Use the `delphi-build` skill
 - Do NOT use `Move()` on arrays containing managed types (`RawUtf8`, `string`, etc.) — use element-by-element assignment instead to preserve reference counting
 - Thread safety via critical sections in event bus, resource manager, session tracking
 - Logging via `TSynLog` with file rotation (10MB, 5 files)
-- Build output streamed live to CodeSite via `TMCPOutputCallback` in `ExecuteCommand`
+- Build output streamed live to CodeSite via `TMCPOutputCallback` in `ExecuteCommand` — controlled by `{$IFDEF CODESITE}`, on by default. Build with config `NoCodeSite` or `Release_NoCodeSite` to exclude
 - Graceful shutdown: SIGTERM/SIGINT with 5s pending request timeout

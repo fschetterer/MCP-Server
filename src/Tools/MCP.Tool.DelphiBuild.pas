@@ -15,8 +15,8 @@ uses
   mormot.core.json,
   mormot.core.os,
   MCP.Tool.Base,
-  MCP.Tool.BuildService,
-  CodeSiteLogging;
+  MCP.Tool.BuildService
+  {$IFDEF CODESITE}, CodeSiteLogging{$ENDIF};
 
 type
   /// Delphi build tool - runs build scripts and returns structured errors
@@ -43,14 +43,14 @@ begin
   fName := 'delphi_build';
   fDescription := 'Compile a Delphi project by running an existing build script (.cmd). ' +
     'Returns structured errors, warnings, and hints parsed from compiler output. ' +
-    'Build scripts use the naming convention ~BuildDEBUG.cmd and ~BuildRELEASE.cmd in the project directory. ' +
-    'Workflow: (1) Use windows_dir with pattern ~Build*.cmd to find existing scripts in the project directory. ' +
-    '(2) If no script exists, create one that calls rsvars.bat, sets version variables, then invokes MSBuild on the .dproj file. ' +
-    '(3) Run the build with this tool. ' +
+    'Build scripts are named ~Build.cmd in the project directory and take positional parameters: ' +
+    'RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]. ' +
+    'Workflow: (1) Use windows_dir with pattern ~Build.cmd to find the script. ' +
+    '(2) If no script exists, create one using the delphi-build-cmd skill. ' +
+    '(3) Run it with this tool. ' +
     '(4) On failure, read the failing source file at the reported line, fix the error, and rebuild. ' +
-    'Delphi versions: athens/d12 (ProductVersion=23.0), florence/d13 (ProductVersion=37.0). ' +
-    'RSVars location: C:\Program Files (x86)\Embarcadero\Studio\{ProductVersion}\bin\rsvars.bat. ' +
-    'Build script template: after calling rsvars.bat and setting version variables, invoke MSBuild with console flags ''/nologo /v:q /clp:NoSummary;ErrorsOnly'' (suppress noise, errors only on console) and file logging ''/fl /flp:logfile=..\logs\MyOutput.log;verbosity=normal'' (full verbose log for diagnosis). Ensure the logs\ folder exists relative to the script. Result includes: success, exit_code, errors/warnings/hints arrays (each entry has file, line, code, severity, message), and raw_output.';
+    'Delphi versions: athens/d12 (RTL=23), florence/d13 (RTL=37). ' +
+    'Result includes: success, exit_code, errors/warnings/hints arrays (each entry has file, line, code, severity, message), and raw_output.';
 end;
 
 function TMCPToolDelphiBuild.BuildInputSchema: Variant;
@@ -65,14 +65,25 @@ begin
   TDocVariantData(Prop).InitFast;
   TDocVariantData(Prop).S['type'] := 'string';
   TDocVariantData(Prop).S['description'] := 'Path to build script (.cmd file). ' +
-      'Scripts are named ~BuildDEBUG.cmd or ~BuildRELEASE.cmd in the project directory. ' +
-      'Use windows_dir with pattern ~Build*.cmd to find them';
+      'Scripts are named ~Build.cmd in the project directory. ' +
+      'Use windows_dir with pattern ~Build.cmd to find it';
   TDocVariantData(Properties).AddValue('script', Prop);
 
-  // config - build configuration (informational, for finding ~BuildDEBUG.cmd etc.)
+  // rtl - Delphi RTL version (1st positional arg)
+  TDocVariantData(Prop).InitFast;
+  TDocVariantData(Prop).S['type'] := 'integer';
+  TDocVariantData(Prop).S['description'] := 'Delphi RTL version number: 23 = Delphi 12 Athens, 37 = Delphi 13 Florence';
+  TDocVariantData(Prop).I['default'] := 23;
+  TDocVariantData(EnumArr).InitArray([], JSON_FAST);
+  TDocVariantData(EnumArr).AddItem(23);
+  TDocVariantData(EnumArr).AddItem(37);
+  TDocVariantData(Prop).AddValue('enum', EnumArr);
+  TDocVariantData(Properties).AddValue('rtl', Prop);
+
+  // config - build configuration (2nd positional arg)
   TDocVariantData(Prop).InitFast;
   TDocVariantData(Prop).S['type'] := 'string';
-  TDocVariantData(Prop).S['description'] := 'Build configuration - identifies which script to use (e.g. ~BuildDEBUG.cmd for DEBUG, ~BuildRELEASE.cmd for RELEASE)';
+  TDocVariantData(Prop).S['description'] := 'Build configuration passed as 2nd arg to ~Build.cmd (e.g. Debug, Release, NoCodeSite, _NoCodeSite)';
   TDocVariantData(Prop).S['default'] := 'DEBUG';
   TDocVariantData(EnumArr).InitArray([], JSON_FAST);
   TDocVariantData(EnumArr).AddItem('DEBUG');
@@ -80,7 +91,7 @@ begin
   TDocVariantData(Prop).AddValue('enum', EnumArr);
   TDocVariantData(Properties).AddValue('config', Prop);
 
-  // platform - target platform
+  // platform - target platform (3rd positional arg)
   TDocVariantData(Prop).InitFast;
   TDocVariantData(Prop).S['type'] := 'string';
   TDocVariantData(Prop).S['description'] := 'Target platform';
@@ -91,7 +102,7 @@ begin
   TDocVariantData(Prop).AddValue('enum', EnumArr);
   TDocVariantData(Properties).AddValue('platform', Prop);
 
-  // verbosity - MSBuild verbosity
+  // verbosity - MSBuild verbosity (maps to SHOWWARNINGS 5th arg when not 'n')
   TDocVariantData(Prop).InitFast;
   TDocVariantData(Prop).S['type'] := 'string';
   TDocVariantData(Prop).S['description'] := 'MSBuild verbosity level: q=quiet, m=minimal, n=normal, d=detailed, diag=diagnostic';
@@ -282,17 +293,18 @@ end;
 
 procedure TMCPToolDelphiBuild.OnBuildOutput(const Chunk: RawUtf8);
 begin
-  CodeSite.Send(Utf8ToString(Chunk));
+  {$IFDEF CODESITE}CodeSite.Send(Utf8ToString(Chunk));{$ENDIF}
 end;
 
 function TMCPToolDelphiBuild.Execute(const Arguments: Variant;
   const SessionId: RawUtf8): Variant;
 var
   ArgsDoc: PDocVariantData;
-  Script, Cmd, Output, ScriptDir: RawUtf8;
+  Script, Config, Platform, Verbosity, Cmd, Output, ScriptDir: RawUtf8;
   ExitCode: Integer;
   ResultDoc: TDocVariantData;
   Errors, Warnings, Hints: TDocVariantData;
+  RTL: Integer;
 begin
   ArgsDoc := _Safe(Arguments);
 
@@ -325,11 +337,32 @@ begin
     Exit;
   end;
 
+  // Read parameters with defaults
+  Config := ArgsDoc^.U['config'];
+  if Config = '' then
+    Config := 'DEBUG';
+  Platform := ArgsDoc^.U['platform'];
+  if Platform = '' then
+    Platform := 'Win64';
+  Verbosity := ArgsDoc^.U['verbosity'];
+
+  // Determine RTL version: default to 23 (Delphi 12 Athens)
+  RTL := ArgsDoc^.I['rtl'];
+  if RTL = 0 then
+    RTL := 23;
+
   ScriptDir := StringToUtf8(ExtractFilePath(Utf8ToString(Script)));
-  Cmd := FormatUtf8('"%"', [Script]);
+
+  // Build command: ~Build.cmd RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]
+  // 4th arg (SKIPCLEAN) always empty = clean build
+  // 5th arg (SHOWWARNINGS) set when verbosity is not default quiet
+  if (Verbosity <> '') and (Verbosity <> 'q') then
+    Cmd := FormatUtf8('"%" % % % "" 1', [Script, RTL, Config, Platform])
+  else
+    Cmd := FormatUtf8('"%" % % %', [Script, RTL, Config, Platform]);
 
   // Execute build with CodeSite streaming
-  CodeSite.EnterMethod('delphi_build: ' + Utf8ToString(Script));
+  {$IFDEF CODESITE}CodeSite.EnterMethod('delphi_build: ' + Utf8ToString(Script));{$ENDIF}
   try
     fOnOutput := OnBuildOutput;
     try
@@ -342,7 +375,7 @@ begin
       fOnOutput := nil;
     end;
   finally
-    CodeSite.ExitMethod('delphi_build');
+    {$IFDEF CODESITE}CodeSite.ExitMethod('delphi_build');{$ENDIF}
   end;
 
   // Parse compiler output
@@ -361,12 +394,14 @@ begin
   ResultDoc.U['raw_output'] := Output;
 
   // Log summary to CodeSite
+  {$IFDEF CODESITE}
   if ExitCode = 0 then
     CodeSite.Send(Format('Build SUCCEEDED: %d error(s), %d warning(s), %d hint(s)',
       [Errors.Count, Warnings.Count, Hints.Count]))
   else
     CodeSite.SendError(Format('Build FAILED: %d error(s), %d warning(s), %d hint(s)',
       [Errors.Count, Warnings.Count, Hints.Count]));
+  {$ENDIF}
 
   Result := ToolResultJson(Variant(ResultDoc));
 end;

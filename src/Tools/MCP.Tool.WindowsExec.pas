@@ -14,8 +14,8 @@ uses
   mormot.core.json,
   mormot.core.os,
   MCP.Tool.Base,
-  MCP.Tool.BuildService,
-  CodeSiteLogging;
+  MCP.Tool.BuildService
+  {$IFDEF CODESITE}, CodeSiteLogging{$ENDIF};
 
 type
   /// Windows exec tool - executes commands in sandboxed paths
@@ -36,7 +36,7 @@ implementation
 
 procedure TMCPToolWindowsExec.OnCommandOutput(const Chunk: RawUtf8);
 begin
-  CodeSite.Send(Utf8ToString(Chunk));
+  {$IFDEF CODESITE}CodeSite.Send(Utf8ToString(Chunk));{$ENDIF}
 end;
 
 constructor TMCPToolWindowsExec.Create;
@@ -150,10 +150,10 @@ begin
     Timeout := 600;
 
   // Execute command
-  CodeSite.EnterMethod('windows_exec: ' + Utf8ToString(Cmd));
+  {$IFDEF CODESITE}CodeSite.EnterMethod('windows_exec: ' + Utf8ToString(Cmd));{$ENDIF}
   try
     if LogFile = '' then
-      fOnOutput := OnCommandOutput;  // writes chunks live to Codesite
+      fOnOutput := OnCommandOutput;  // writes chunks live to CodeSite
     try
       if not ExecuteCommand(Cmd, Cwd, Timeout * 1000, Output, ExitCode) then
       begin
@@ -163,23 +163,28 @@ begin
     finally
       fOnOutput := nil;
     end;
+    {$IFDEF CODESITE}
     if (Cwd <> '') then CodeSite.Send('Cwd: "%s"', [Cwd]);
+    {$ENDIF}
     if LogFile <> '' then begin
-      // CodeSite already sent a stream of chunks if no Logfile
       Tail := string(Output).split([CRLF], TStringSplitOptions.ExcludeEmpty);
       var lTail := Length(Tail);
       if lTail > nTail then begin
         var iTail := lTail - nTail;
         Tail  := Copy(Tail, iTail, nTail);
       end;
+      {$IFDEF CODESITE}
       for var L in Tail do CodeSite.Send(L);
       CodeSite.Send('Log_File: "%s"', [LogFile]);
+      {$ENDIF}
     end;
   finally
+    {$IFDEF CODESITE}
     var b := (ExitCode = 0);
     var s := 'Success';
     if not b then s:= 'Failed';
     CodeSite.ExitMethod(Format('windows_exec: %s(%d)', [s, ExitCode]));
+    {$ENDIF}
   end;
 
 

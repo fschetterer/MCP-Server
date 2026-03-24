@@ -16,6 +16,12 @@ Los tools `delphi_lookup` y LSP (`delphi_hover`, `delphi_definition`, `delphi_re
 
 Esto se complementa bien con [DelphiAST_MCP](https://github.com/fschetterer/DelphiAST_MCP), un servidor MCP complementario que proporciona análisis estructural de código (parsing AST, detalle de tipos, grafos de llamadas, cadenas de herencia) para proyectos Delphi. Juntos dan al agente de IA una visión completa: **DelphiAST_MCP** para entender la estructura del proyecto y el flujo de código, y **este servidor** para resolución profunda de símbolos contra todo el ecosistema Delphi incluyendo librerías de terceros.
 
+### Por qué solo HTTP (sin Stdio)
+
+Este servidor existe para dar a un **Claude Code sandboxed ejecutándose en un contenedor Linux** acceso a herramientas de compilación y búsqueda de símbolos en el host Windows a través de la red. El transporte stdio requiere que el cliente lance el servidor como proceso hijo — un contenedor no puede ejecutar un `.exe` de Windows. HTTP+SSE es el único transporte que funciona a través de esa frontera.
+
+Para uso **local solo en Windows** (Git Bash, Claude Desktop), el repo [delphi-lookup](https://github.com/JavierusTk/delphi-lookup) ya incluye skills de Claude Code que funcionan sin un servidor MCP.
+
 ### Autenticación
 
 Se genera un token aleatorio de 32 caracteres hexadecimales al iniciar y se muestra en la consola. Los clientes deben pasar este token como parámetro `token` en cada llamada a tool. Deshabilitar con `--no-auth` o alternar en tiempo de ejecución vía el menú de consola.
@@ -25,7 +31,6 @@ Se genera un token aleatorio de 32 caracteres hexadecimales al iniciar y se mues
 ```bash
 MCPServer.exe                          # HTTP en puerto 3000 (por defecto)
 MCPServer.exe --port=8080              # Puerto personalizado
-MCPServer.exe --transport=stdio        # Para clientes MCP stdio
 MCPServer.exe --no-auth                # Deshabilitar autenticación
 MCPServer.exe --daemon                 # Sin menú de consola (headless)
 ```
@@ -43,11 +48,35 @@ TLS usa el soporte nativo de mORMot2: SChannel en Windows (sin DLLs extra), Open
 ### Scripts de Compilación
 
 ```bash
-~BuildDEBUG.cmd       # Configuración Debug
-~BuildRELEASE.cmd     # Configuración Release
+~Build.cmd 23 Debug Win64       # Debug, Delphi 12 Athens
+~Build.cmd 23 Release Win64     # Release
+~Build.cmd 23 NoCodeSite Win64  # Debug sin CodeSite
 ```
 
 **Requerido**: variable de entorno `mormot2` apuntando al directorio fuente de mORMot2.
+
+### Flujo de Compilación: MCP Tool + Claude Code Skill
+
+El **tool MCP `delphi_build`** (parte de este servidor) solo **ejecuta** el script `~Build.cmd` existente y retorna la salida estructurada del compilador. **No** crea scripts.
+
+El **skill de Claude Code `delphi-build-cmd`** (plugin separado del lado del cliente) **crea** scripts de compilación cuando no existen. Conoce las convenciones de MSBuild, rutas de rsvars.bat, configuración de logs, y mejores prácticas de clean vs incremental.
+
+**Flujo de trabajo:**
+1. Usar `windows_dir` con patrón `~Build.cmd` para buscar el script
+2. Si no existe, el skill `delphi-build-cmd` crea uno
+3. Usar `delphi_build` para ejecutarlo y obtener errores/warnings/hints estructurados
+
+**Instalar el skill:** Copiar `skills/delphi-build-cmd/` de este repo a `~/.claude/skills/delphi-build-cmd/`. Claude Code lo detecta automáticamente — no requiere reinicio.
+
+### Streaming en Vivo con CodeSite
+
+La salida de compilación y comandos se transmite en tiempo real a [CodeSite](https://docwiki.embarcadero.com/RADStudio/en/CodeSite_Overview) para depuración en el IDE de Delphi. Esto se controla con la directiva de compilador `CODESITE`, que está **activada por defecto** en el `.dproj`.
+
+- **Con CodeSite**: Compilar con configuración `Debug` o `Release` (por defecto)
+- **Sin CodeSite**: Compilar con configuración `NoCodeSite` o `Release_NoCodeSite`
+- **Archivos afectados**: `MCP.Tool.DelphiBuild.pas`, `MCP.Tool.WindowsExec.pas`
+
+Para desactivar permanentemente, eliminar `CODESITE` de `DCC_Define` en `MCPServer.dproj`.
 
 ### Tools de Compilación y Sistema Delphi
 
@@ -55,7 +84,7 @@ Tools nativos de Windows (sandboxed a rutas permitidas):
 
 | Tool | Descripción |
 |------|-------------|
-| `delphi_build` | Ejecuta scripts `~Build*.cmd` con parsing estructurado de errores/warnings/hints |
+| `delphi_build` | Ejecuta `~Build.cmd` con parsing estructurado de errores/warnings/hints |
 | `delphi_lookup` | Busca en bases de datos de símbolos Delphi (archivos .db) |
 | `delphi_index` | Indexa archivos fuente Pascal en bases de datos de símbolos |
 | `windows_exec` | Ejecuta comandos Windows (sandboxed) |
@@ -98,7 +127,7 @@ Para cambiarlas, editar `.SandboxedPaths` — una ruta por línea, `#` para come
 MCP-Server/
 ├── MCPServer.dpr               # Archivo de proyecto Delphi
 ├── MCPServer.dproj             # Opciones de proyecto Delphi
-├── ~BuildDEBUG.cmd             # Script de compilación Debug
+├── ~Build.cmd                  # Script de compilación parametrizado (RTL CONFIG PLATFORM)
 ├── src/
 │   ├── Core/
 │   │   ├── MCP.Manager.Registry.pas   # Registro y despacho de managers
@@ -107,7 +136,6 @@ MCP-Server/
 │   │   └── MCP.Types.pas              # Tipos, configuración, helpers JSON-RPC
 │   ├── Transport/
 │   │   ├── MCP.Transport.Base.pas     # Abstracción de transporte
-│   │   ├── MCP.Transport.Stdio.pas    # Transporte stdio
 │   │   └── MCP.Transport.Http.pas     # Transporte HTTP + SSE
 │   ├── Server/
 │   │   └── MCP.Server.pas             # Servidor HTTP legacy
@@ -138,6 +166,9 @@ MCP-Server/
 │   │   └── MCP.Resource.Base.pas      # Clase base de resource
 │   └── Prompts/
 │       └── MCP.Prompt.Base.pas        # Clase base de prompt
+├── skills/
+│   └── delphi-build-cmd/
+│       └── SKILL.md                   # Skill de Claude Code para crear scripts de compilación
 ```
 
 ---
@@ -150,7 +181,7 @@ MCP-Server/
 
 ### Core
 - **Implementación pura mORMot2** - Sin dependencias externas más allá de mORMot2
-- **Soporte dual de transporte** - stdio y HTTP con SSE
+- **Transporte HTTP+SSE** - Para acceso contenedor-a-Windows
 - **JSON-RPC 2.0** - Soporte completo del protocolo usando `TDocVariant`
 - **Arquitectura modular** - Fácil de extender con tools, resources y prompts personalizados
 
@@ -162,7 +193,6 @@ MCP-Server/
 - **Completion** - Auto-completado de argumentos para prompts y resources
 
 ### Capa de Transporte
-- **Transporte stdio** - JSON-RPC delimitado por newline, logs a stderr
 - **Transporte HTTP** - API REST con Server-Sent Events (SSE) y soporte CORS
 - **Gestión de sesiones** - IDs de sesión criptográficos (128-bit)
 - **Notificaciones SSE** - Comunicación bidireccional en tiempo real
@@ -195,25 +225,7 @@ msbuild MCPServer.dproj /p:Config=Release /p:Platform=Win64
 
 ## Uso
 
-### Transporte stdio (para Claude Desktop)
-
-```bash
-MCPServer.exe --transport=stdio
-```
-
-Configura en Claude Desktop (`claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "mormot-server": {
-      "command": "C:\\ruta\\a\\MCPServer.exe",
-      "args": ["--transport=stdio"]
-    }
-  }
-}
-```
-
-### Transporte HTTP (para clientes web)
+### Transporte HTTP
 
 ```bash
 # Puerto por defecto 3000

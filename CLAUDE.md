@@ -10,7 +10,9 @@ mORMot2 MCP Server: a high-performance Model Context Protocol (MCP) server imple
 
 ## Building
 
-Use `~BuildDEBUG.cmd` or `~BuildRELEASE.cmd` in the project root. The `delphi_build` tool only runs existing scripts.
+Use `~Build.cmd` in the project root. It takes positional parameters: `RTL CONFIG PLATFORM [SKIPCLEAN] [SHOWWARNINGS]`.
+
+**`delphi_build` MCP tool vs `delphi-build-cmd` Claude Code skill**: These are **separate components**. The MCP tool (`delphi_build` in `src/Tools/MCP.Tool.DelphiBuild.pas`) is part of the server — it only **runs** existing `.cmd` scripts and parses compiler output. The Claude Code skill (`delphi-build-cmd` in `~/.claude/skills/`) is a **client-side plugin** that lives outside this repo — it **creates** build scripts when none exist. Workflow: (1) use `windows_dir` to check for `~Build.cmd`, (2) if missing, the `delphi-build-cmd` skill creates one, (3) `delphi_build` runs it.
 
 ```bash
 # Manual MSBuild
@@ -25,7 +27,6 @@ msbuild MCPServer.dproj /p:Config=Debug /p:Platform=Win64
 MCPServer.exe                          # HTTP on port 3000 (default)
 MCPServer.exe --port=8080              # Custom port
 MCPServer.exe --no-auth                # Disable authentication
-MCPServer.exe --transport=stdio        # For stdio MCP clients
 MCPServer.exe --daemon                 # No console menu
 ```
 
@@ -41,7 +42,7 @@ By default a random 32-hex token is generated on startup and shown in the consol
 
 ```
 Client (JSON-RPC 2.0)
-  → Transport (stdio or HTTP+SSE)
+  → Transport (HTTP+SSE)
     → TMCPRequestProcessor.HandleRequest()
       → TMCPManagerRegistry.GetManagerForMethod()
         → IMCPCapabilityManager.ExecuteMethod()
@@ -53,7 +54,7 @@ Client (JSON-RPC 2.0)
 | Layer | Location | Purpose |
 |-------|----------|---------|
 | **Protocol** | `src/Protocol/MCP.Types.pas` | Core types, settings, JSON-RPC helpers, error codes |
-| **Transport** | `src/Transport/` | `TMCPStdioTransport` and `TMCPHttpTransport` (THttpAsyncServer + SSE) |
+| **Transport** | `src/Transport/` | `TMCPHttpTransport` (THttpAsyncServer + SSE) |
 | **Core** | `src/Core/` | `TMCPManagerRegistry` (dispatch) and `TMCPEventBus` (thread-safe pub/sub) |
 | **Managers** | `src/Managers/` | Core, Tools, Resources, Prompts, Logging, Completion |
 | **Tools** | `src/Tools/` | Tool implementations |
@@ -65,7 +66,7 @@ Client (JSON-RPC 2.0)
 |------|-------|-------------|
 | `echo` | `TMCPToolEcho` | Echo input back |
 | `get_time` | `TMCPToolGetTime` | Current date/time |
-| `delphi_build` | `TMCPToolDelphiBuild` | Run `~Build*.cmd` scripts, parse errors |
+| `delphi_build` | `TMCPToolDelphiBuild` | Run `~Build.cmd` script, parse errors |
 | `delphi_lookup` | `TMCPToolDelphiLookup` | Search symbol databases (.db) |
 | `delphi_index` | `TMCPToolDelphiIndexer` | Index Pascal source into .db |
 | `windows_exec` | `TMCPToolWindowsExec` | Run Windows commands (sandboxed paths) |
@@ -89,6 +90,17 @@ The four `delphi_*` LSP tools communicate with `delphi-lsp-server.exe` via stdin
 - Path resolution: searches exe dir first, then parent directory
 
 **Important bug fixed (50ebd5d)**: `RespDoc.Value['result']` returns a reference into a stack-allocated TDocVariantData. Must round-trip through JSON (`ToJson` + `InitJson`) to get an independent copy before the stack frame is freed.
+
+### CodeSite Logging
+
+Build and command output is streamed live to [CodeSite](https://docwiki.embarcadero.com/RADStudio/en/CodeSite_Overview) for real-time debugging in the Delphi IDE.
+
+- **Compiler directive**: `{$IFDEF CODESITE}` — defined in `.dproj` Base config, so it's **on by default**
+- **Files using CodeSite**: `MCP.Tool.DelphiBuild.pas`, `MCP.Tool.WindowsExec.pas`
+- **Unit**: `CodeSiteLogging` (conditionally included in uses clause)
+- **Methods used**: `CodeSite.Send()`, `CodeSite.SendError()`, `CodeSite.EnterMethod()`, `CodeSite.ExitMethod()`
+- **Build configs without CodeSite**: `NoCodeSite` (Debug parent), `Release_NoCodeSite` (Release parent)
+- **To disable**: build with config `NoCodeSite` or `Release_NoCodeSite`, or remove `CODESITE` from `.dproj` DCC_Define
 
 ### Key Design Patterns
 

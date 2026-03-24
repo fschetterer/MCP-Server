@@ -1,6 +1,6 @@
 ﻿/// MCP Transport Abstraction Layer
 // - Transport-agnostic interface for MCP server communication
-// - Supports stdio, HTTP, and future transports via factory pattern
+// - HTTP+SSE transport for container-to-Windows access
 // - Implements graceful shutdown with SIGTERM/SIGINT handling (REQ-019)
 unit MCP.Transport.Base;
 
@@ -25,8 +25,7 @@ uses
 type
   /// Transport type enumeration
   TMCPTransportType = (
-    mttStdio,   // Standard input/output (for CLI tools)
-    mttHttp     // HTTP/HTTPS transport (existing implementation)
+    mttHttp     // HTTP/HTTPS transport
   );
 
   /// Configuration record for transport layer
@@ -59,7 +58,7 @@ type
     const SessionId: RawUtf8): RawUtf8 of object;
 
   /// Transport interface for MCP communication
-  // Implementations handle the specifics of stdio, HTTP, etc.
+  // Implementations handle HTTP+SSE communication
   IMCPTransport = interface
     ['{C7D8E9F0-1A2B-3C4D-5E6F-7A8B9C0D1E2F}']
     /// Start the transport (begin accepting connections/input)
@@ -142,11 +141,11 @@ type
   TMCPTransportFactory = class
   public
     /// Create a transport based on configuration
-    // Note: Requires MCP.Transport.Http and MCP.Transport.Stdio in uses clause
+    // Note: Requires MCP.Transport.Http in uses clause
     class function CreateTransport(
       const Config: TMCPTransportConfig): IMCPTransport;
     /// Create a transport from command line transport type string
-    // @param TransportStr 'stdio' or 'http'
+    // @param TransportStr transport type string (currently only 'http')
     // @param Settings Server settings for HTTP transport
     class function CreateFromString(const TransportStr: RawUtf8;
       const Settings: TMCPServerSettings): IMCPTransport;
@@ -383,9 +382,8 @@ end;
 class function TMCPTransportFactory.CreateTransport(
   const Config: TMCPTransportConfig): IMCPTransport;
 begin
-  // This method requires the caller to have MCP.Transport.Http and
-  // MCP.Transport.Stdio in their uses clause. The actual creation
-  // is delegated to the main program.
+  // This method requires the caller to have MCP.Transport.Http
+  // in their uses clause. The actual creation is delegated to the main program.
   raise EMCPError.Create(
     'CreateTransport should not be called directly. ' +
     'Use CreateFromString or create transports directly.');
@@ -403,23 +401,13 @@ end;
 class function TMCPTransportFactory.ParseTransportType(
   const Value: RawUtf8): TMCPTransportType;
 begin
-  if IdemPropNameU(Value, 'stdio') then
-    Result := mttStdio
-  else if IdemPropNameU(Value, 'http') then
-    Result := mttHttp
-  else
-    Result := mttHttp; // Default to HTTP
+  Result := mttHttp;
 end;
 
 class function TMCPTransportFactory.TransportTypeToString(
   TransportType: TMCPTransportType): RawUtf8;
 begin
-  case TransportType of
-    mttStdio: Result := 'stdio';
-    mttHttp: Result := 'http';
-  else
-    Result := 'http';
-  end;
+  Result := 'http';
 end;
 
 class function TMCPTransportFactory.ConfigFromSettings(

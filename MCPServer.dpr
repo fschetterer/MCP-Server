@@ -1,6 +1,6 @@
 ﻿/// mORMot2 MCP Server - Console Application
 // - High-performance MCP server using mORMot2 framework
-// - Supports multiple transports: stdio, http
+// - HTTP+SSE transport for container-to-Windows access
 program MCPServer;
 
 {$I mormot.defines.inc}
@@ -49,8 +49,7 @@ uses
   MCP.Manager.Prompts in 'src\Managers\MCP.Manager.Prompts.pas',
   MCP.Manager.Completion in 'src\Managers\MCP.Manager.Completion.pas',
   MCP.Transport.Base in 'src\Transport\MCP.Transport.Base.pas',
-  MCP.Transport.Http in 'src\Transport\MCP.Transport.Http.pas',
-  MCP.Transport.Stdio in 'src\Transport\MCP.Transport.Stdio.pas';
+  MCP.Transport.Http in 'src\Transport\MCP.Transport.Http.pas';
 
 type
   /// Helper class to provide request handler method
@@ -73,8 +72,6 @@ var
   ResourcesManager: TMCPResourcesManager;
   PromptsManager: TMCPPromptsManager;
   CompletionManager: TMCPCompletionManager;
-  TransportType: TMCPTransportType;
-  TransportTypeStr: RawUtf8;
   TransportConfig: TMCPTransportConfig;
   RequestProcessor: TMCPRequestProcessor;
   NoAuth: Boolean = False; // Flag to disable authentication
@@ -244,12 +241,6 @@ begin
     Inc(I);
   end;
 
-  // Parse transport type
-  TransportTypeStr := StringToUtf8(GetSwitchValue('transport'));
-  if TransportTypeStr = '' then
-    TransportTypeStr := 'http';
-  TransportType := TMCPTransportFactory.ParseTransportType(TransportTypeStr);
-
   // Parse TLS settings
   if HasSwitch('tls') then
     Settings.SSLEnabled := True;
@@ -403,88 +394,61 @@ procedure RunWithTransport;
 var
   IsDaemon: Boolean;
   HttpTransport: TMCPHttpTransport;
-  StdioTransport: TMCPStdioTransport;
   ShutdownSuccess: Boolean;
   Protocol: string;
 begin
   IsDaemon := HasSwitch('daemon') or HasSwitch('d');
 
   // Create transport config from settings
-  TransportConfig := TMCPTransportFactory.ConfigFromSettings(TransportType, Settings);
+  TransportConfig := TMCPTransportFactory.ConfigFromSettings(mttHttp, Settings);
 
-  case TransportType of
-    mttStdio:
-      begin
-        // Stdio mode - minimal output, just JSON
-        // Signal handling and graceful shutdown is handled internally by the transport
-        TSynLog.Add.Log(sllInfo, 'Starting MCP Server in stdio mode');
+  WriteLn('mORMot2 MCP Server v1.0.0');
+  WriteLn('========================');
+  WriteLn('Transport: HTTP');
+  WriteLn;
 
-        StdioTransport := TMCPStdioTransport.Create(TransportConfig);
-        try
-          StdioTransport.ManagerRegistry := Registry;
-          StdioTransport.SetRequestHandler(RequestProcessor.HandleRequest);
-          StdioTransport.Start; // Blocks until EOF or SIGTERM/SIGINT
-        finally
-          StdioTransport.Free;
-        end;
-      end;
+  if Settings.Port <> 3000 then
+    WriteLn('Port: ', Settings.Port);
+  // Limit to LAN
+  Settings.Host := '10.168.1.0';
 
-    mttHttp:
-      begin
-        WriteLn('mORMot2 MCP Server v1.0.0');
-        WriteLn('========================');
-        WriteLn('Transport: HTTP');
-        WriteLn;
+  if Settings.SSLEnabled then
+    Protocol := 'https'
+  else
+    Protocol := 'http';
 
-        if Settings.Port <> 3000 then
-          WriteLn('Port: ', Settings.Port);
-        // Limit to LAN
-        Settings.Host := '10.168.1.0';
+  HttpTransport := TMCPHttpTransport.Create(TransportConfig);
+  try
+    HttpTransport.ManagerRegistry := Registry;
+    HttpTransport.SetRequestHandler(RequestProcessor.HandleRequest);
+    HttpTransport.Start;
 
-        if Settings.SSLEnabled then
-          Protocol := 'https'
-        else
-          Protocol := 'http';
+    WriteLn;
+    WriteLn('Server listening on ', Protocol, '://', Settings.Host, ':',
+      Settings.Port, Settings.Endpoint);
 
-        HttpTransport := TMCPHttpTransport.Create(TransportConfig);
-        try
-          HttpTransport.ManagerRegistry := Registry;
-          HttpTransport.SetRequestHandler(RequestProcessor.HandleRequest);
-          HttpTransport.Start;
-
-          WriteLn;
-          WriteLn('Server listening on ', Protocol, '://', Settings.Host, ':',
-            Settings.Port, Settings.Endpoint);
-
-          if IsDaemon then
-          begin
-            WriteLn('Running in daemon mode. Press Ctrl+C to stop (graceful shutdown).');
-            // Use ConsoleWaitForEnterKey which handles SIGTERM/SIGINT properly
-            // and also responds to Enter key press
-            ConsoleWaitForEnterKey;
-            // Graceful shutdown with 5s timeout for pending requests
-            WriteLn('Initiating graceful shutdown...');
-            ShutdownSuccess := HttpTransport.GracefulShutdown(GRACEFUL_SHUTDOWN_TIMEOUT_MS);
-            if not ShutdownSuccess then
-              WriteLn('Warning: Some requests may not have completed');
-          end
-          else
-          begin
-            // Show interactive console menu for HTTP mode
-            ShowConsoleMenu;
-            // Graceful shutdown with 5s timeout for pending requests
-            WriteLn('Initiating graceful shutdown...');
-            ShutdownSuccess := HttpTransport.GracefulShutdown(GRACEFUL_SHUTDOWN_TIMEOUT_MS);
-            if not ShutdownSuccess then
-              WriteLn('Warning: Some requests may not have completed');
-          end;
-        finally
-          HttpTransport.Free;
-        end;
-
-        WriteLn('Server stopped.');
-      end;
+    if IsDaemon then
+    begin
+      WriteLn('Running in daemon mode. Press Ctrl+C to stop (graceful shutdown).');
+      ConsoleWaitForEnterKey;
+      WriteLn('Initiating graceful shutdown...');
+      ShutdownSuccess := HttpTransport.GracefulShutdown(GRACEFUL_SHUTDOWN_TIMEOUT_MS);
+      if not ShutdownSuccess then
+        WriteLn('Warning: Some requests may not have completed');
+    end
+    else
+    begin
+      ShowConsoleMenu;
+      WriteLn('Initiating graceful shutdown...');
+      ShutdownSuccess := HttpTransport.GracefulShutdown(GRACEFUL_SHUTDOWN_TIMEOUT_MS);
+      if not ShutdownSuccess then
+        WriteLn('Warning: Some requests may not have completed');
+    end;
+  finally
+    HttpTransport.Free;
   end;
+
+  WriteLn('Server stopped.');
 end;
 
 procedure ShowDatabases;
@@ -560,9 +524,7 @@ begin
     SetAuthToken(''); // Clear any existing token
     TSynLog.Add.Log(sllInfo, 'Authentication DISABLED by --no-auth flag');
 
-    // Also display in console for HTTP mode
-    if TransportType = mttHttp then
-      WriteLn('Authentication DISABLED by --no-auth flag');
+    WriteLn('Authentication DISABLED by --no-auth flag');
   end;
   Writeln;
   // List available Delphi symbol databases
@@ -600,7 +562,7 @@ begin
   // Create request processor
   RequestProcessor := TMCPRequestProcessor.Create(Registry);
   try
-    // Run with new transport system (supports both stdio and HTTP with SSE)
+    // Run HTTP+SSE transport
     RunWithTransport;
   finally
     RequestProcessor.Free;
@@ -613,15 +575,8 @@ begin
   except
     on E: Exception do
     begin
-      // For stdio mode, output error as JSON-RPC error
-      if TransportType = mttStdio then
-        WriteLn(CreateJsonRpcError(Null, JSONRPC_INTERNAL_ERROR,
-          StringToUtf8('Fatal error: ' + E.Message)))
-      else
-      begin
-        WriteLn('Error: ', E.Message);
-        TSynLog.Add.Log(sllError, 'Fatal error: %', [E.Message]);
-      end;
+      WriteLn('Error: ', E.Message);
+      TSynLog.Add.Log(sllError, 'Fatal error: %', [E.Message]);
       ExitCode := 1;
     end;
   end;
